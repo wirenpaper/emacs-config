@@ -543,39 +543,39 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
     (append slots nil)))
 
 (defun my/hydra-assign-slot ()
-  "Manually assign a bookmark to a specific slot (1-8) on the board."
+  "Prompt for a board, then a bookmark on that board, and assign it a specific slot."
   (interactive)
-  (let ((bms (my/get-workspace-bookmarks)))
-    (if (not bms)
-        (message "No bookmarks available to move!")
-      (let* ((bm-name (completing-read "Select bookmark to move: " bms nil t))
-             (tags (bookmark-prop-get bm-name 'tags))
-             (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
+  (bookmark-maybe-load-default-file)
+  (let* ((root (my/get-workspace))
+         (boards (if my/current-speed-dial-tag
+                     (list "global" my/current-speed-dial-tag)
+                   (list "global")))
+         (target-tag (completing-read "Select board to organize: " boards nil t))
+         (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+         (tagged-bms (cl-remove-if-not (lambda (bm) (member target-tag (bookmark-prop-get bm 'tags))) project-bms))
+         (bm-names (mapcar #'car tagged-bms)))
+    
+    (if (not bm-names)
+        (message "No bookmarks found on the[%s] board!" target-tag)
+      
+      (let* ((bm-name (completing-read (format "Move bookmark on [%s]: " target-tag) bm-names nil t))
+             (slot-str (read-string (format "Pin '%s' to slot (1-8): " bm-name)))
+             (slot-num (string-to-number slot-str))
+             (prop (intern (concat "slot-" target-tag))))
         
-        (if (not clean-tags)
-            (message "Bookmark has no assigned tags!")
-          (let* ((target-tag (if (= (length clean-tags) 1)
-                                 (car clean-tags)
-                               (completing-read "Which tag's board? " clean-tags nil t)))
-                 (slot-str (read-string "Enter slot number to pin to (1-8): "))
-                 (slot-num (string-to-number slot-str))
-                 (prop (intern (concat "slot-" target-tag))))
-            
-            (if (and (>= slot-num 1) (<= slot-num 8))
-                (progn
-                  ;; Kick out any other bookmark currently occupying this exact slot
-                  (dolist (other-bm (mapcar #'car bookmark-alist))
-                    (when (and (not (string= other-bm bm-name))
-                               (eq (bookmark-prop-get other-bm prop) slot-num))
-                      (bookmark-prop-set other-bm prop nil)))
-                  
-                  ;; Assign the slot to our chosen bookmark
-                  (bookmark-prop-set bm-name prop slot-num)
-                  (bookmark-save)
-                  (message "Pinned '%s' to slot %d on the [%s] board!" bm-name slot-num target-tag))
-              (message "Invalid slot number! Must be between 1 and 8.")))))))
+        (if (and (>= slot-num 1) (<= slot-num 8))
+            (progn
+              (dolist (other-bm (mapcar #'car bookmark-alist))
+                (when (and (not (string= other-bm bm-name))
+                           (eq (bookmark-prop-get other-bm prop) slot-num))
+                  (bookmark-prop-set other-bm prop nil)))
+              
+              (bookmark-prop-set bm-name prop slot-num)
+              (bookmark-save)
+              (message "Pinned '%s' to slot %d on the[%s] board!" bm-name slot-num target-tag))
+          (message "Invalid slot number! Must be between 1 and 8.")))))
   
-  ;; Resume the HUD to see the changes immediately
+  ;; Resume the HUD (Now safely tucked INSIDE the function!)
   (hydra-speed-dial/body))
 
 (defun my/hydra-quick-tag-current ()
