@@ -462,9 +462,13 @@
 (define-key evil-normal-state-map (kbd "SPC b t") 'my/bookmark-tag-current-file)
 
 ;; ==========================================
-;; 19. Split-Keyboard Harpoon Speed-Dial
+;; 19. Split-Keyboard Speed-Dial (HYDRA HUD)
 ;; ==========================================
-(require 'cl-lib)
+
+;; 1. Install Hydra
+(unless (package-installed-p 'hydra)
+  (package-install 'hydra))
+(require 'hydra)
 
 (defvar my/current-speed-dial-tag nil
   "The currently active dynamic tag (Right Hand).")
@@ -476,82 +480,108 @@
     (or (member proj-tag (bookmark-prop-get bm 'tags))
         (and file (string-prefix-p root (expand-file-name file))))))
 
-(defun my/show-speed-dial-hud ()
-  "Show the unified HUD for the locked workspace."
-  (interactive)
-  (bookmark-maybe-load-default-file) ;; <--- THE FIX
-  (let* ((root (my/get-workspace))
-         (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
-         
-         ;; LEFT hand (global)
-         (global-bms (cl-remove-if-not (lambda (bm) (member "global" (bookmark-prop-get bm 'tags))) project-bms))
-         (sorted-global (sort (mapcar #'car global-bms) #'string<))
-         (left-keys '("a" "s" "d" "f" "z" "x" "c" "v"))
-         (left-hud (if sorted-global
-                       (mapconcat #'identity (cl-loop for name in sorted-global for i from 0
-                                                      collect (format "[%s] %s" (or (nth i left-keys) "?") name)) " ")
-                     "Empty"))
-         
-         ;; RIGHT hand (dynamic)
-         (right-hud (if my/current-speed-dial-tag
-                        (let* ((dynamic-bms (cl-remove-if-not (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags))) project-bms))
-                               (sorted-dynamic (sort (mapcar #'car dynamic-bms) #'string<))
-                               (right-keys '("j" "k" "l" ";" "m" "," "." "/")))
-                          (if sorted-dynamic
-                              (mapconcat #'identity (cl-loop for name in sorted-dynamic for i from 0
-                                                             collect (format "[%s] %s" (or (nth i right-keys) "?") name)) " ")
-                            "Empty"))
-                      "No tag locked")))
-    (message "LEFT(global): %s   ||   RIGHT(%s): %s" left-hud (or my/current-speed-dial-tag "none") right-hud)))
-
 (defun my/set-speed-dial-tag ()
   "Choose a tag for the RIGHT hand keys in the locked workspace."
   (interactive)
-  (bookmark-maybe-load-default-file) ;; <--- THE FIX: Force Emacs to load bookmarks
-  (let* ((root (my/get-workspace)) 
+  (bookmark-maybe-load-default-file)
+  (let* ((root (my/get-workspace))
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
          (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
          (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags)))
     (if (not clean-tags)
-        (message "No tags found! Use SPC b t to tag a file first.")
-      (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags))
-      (my/show-speed-dial-hud))))
+        (error "No tags found! Use SPC b t to tag a file first")
+      (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags)))))
 
 (defun my/speed-dial-jump (tag num)
   "Jump to the NUM-th bookmark of TAG in the locked workspace."
-  (bookmark-maybe-load-default-file) ;; <--- THE FIX
+  (bookmark-maybe-load-default-file)
   (let* ((root (my/get-workspace))
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
          (tagged-bms (cl-remove-if-not (lambda (bm) (member tag (bookmark-prop-get bm 'tags))) project-bms))
          (sorted-bms (sort (mapcar #'car tagged-bms) #'string<)))
     (if (not tag)
-        (message "No dynamic tag set for the right hand! Use SPC a t to lock one in.")
+        (message "No dynamic tag set for the right hand! Press 't' to lock one in.")
       (if (or (< num 1) (> num (length sorted-bms)))
-          (message "No file at position %d for tag '%s'." num tag)
+          (message "Empty slot")
         (let ((target (nth (1- num) sorted-bms)))
-          (bookmark-jump target)
-          (message "Jumped to: %s" target))))))
+          (bookmark-jump target))))))
 
-;; --- Keybindings (Same as before) ---
-(define-key evil-normal-state-map (kbd "SPC a t") 'my/set-speed-dial-tag)
-(define-key evil-normal-state-map (kbd "SPC a h") 'my/show-speed-dial-hud)
+;; --- HYDRA SPECIFIC CODE ---
 
-;; Left Hand
-(define-key evil-normal-state-map (kbd "SPC a a") (lambda () (interactive) (my/speed-dial-jump "global" 1)))
-(define-key evil-normal-state-map (kbd "SPC a s") (lambda () (interactive) (my/speed-dial-jump "global" 2)))
-(define-key evil-normal-state-map (kbd "SPC a d") (lambda () (interactive) (my/speed-dial-jump "global" 3)))
-(define-key evil-normal-state-map (kbd "SPC a f") (lambda () (interactive) (my/speed-dial-jump "global" 4)))
-(define-key evil-normal-state-map (kbd "SPC a z") (lambda () (interactive) (my/speed-dial-jump "global" 5)))
-(define-key evil-normal-state-map (kbd "SPC a x") (lambda () (interactive) (my/speed-dial-jump "global" 6)))
-(define-key evil-normal-state-map (kbd "SPC a c") (lambda () (interactive) (my/speed-dial-jump "global" 7)))
-(define-key evil-normal-state-map (kbd "SPC a v") (lambda () (interactive) (my/speed-dial-jump "global" 8)))
+(defun my/sd-name (side num)
+  "Helper for Hydra: fetch, pad, and truncate the bookmark name for the HUD."
+  (bookmark-maybe-load-default-file)
+  (let ((val "-"))
+    (when my/current-workspace-root
+      (let* ((root my/current-workspace-root)
+             (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+             (bms (if (eq side 'left)
+                      (cl-remove-if-not (lambda (bm) (member "global" (bookmark-prop-get bm 'tags))) project-bms)
+                    (if my/current-speed-dial-tag
+                        (cl-remove-if-not (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags))) project-bms)
+                      nil)))
+             (sorted-bms (sort (mapcar #'car bms) #'string<))
+             (target (nth (1- num) sorted-bms)))
+        (when target
+          (setq val target))))
+    ;; Pads to 20 spaces for perfect alignment, and adds "…" if it's too long
+    (truncate-string-to-width val 20 0 ?\s "…")))
 
-;; Right Hand
-(define-key evil-normal-state-map (kbd "SPC a j") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 1)))
-(define-key evil-normal-state-map (kbd "SPC a k") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 2)))
-(define-key evil-normal-state-map (kbd "SPC a l") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 3)))
-(define-key evil-normal-state-map (kbd "SPC a ;") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 4)))
-(define-key evil-normal-state-map (kbd "SPC a m") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 5)))
-(define-key evil-normal-state-map (kbd "SPC a ,") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 6)))
-(define-key evil-normal-state-map (kbd "SPC a .") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 7)))
-(define-key evil-normal-state-map (kbd "SPC a /") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 8)))
+;; Wrappers to reopen the Hydra menu automatically after setting workspace/tag
+(defun my/set-workspace-and-resume ()
+  (interactive)
+  (call-interactively 'my/set-workspace)
+  (hydra-speed-dial/body))
+
+(defun my/set-tag-and-resume ()
+  (interactive)
+  (call-interactively 'my/set-speed-dial-tag)
+  (hydra-speed-dial/body))
+
+;; THE HYDRA HUD ITSELF
+(defhydra hydra-speed-dial (:color blue :hint nil)
+  "
+  ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
+  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")
+
+  ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)
+  ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^
+  _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)
+  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)
+  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)
+  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)
+  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)
+  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)
+
+  _p_: Lock Workspace       _t_: Lock Tag        _q_: Cancel
+  "
+  ;; Left Hand
+  ("a" (my/speed-dial-jump "global" 1))
+  ("s" (my/speed-dial-jump "global" 2))
+  ("d" (my/speed-dial-jump "global" 3))
+  ("f" (my/speed-dial-jump "global" 4))
+  ("z" (my/speed-dial-jump "global" 5))
+  ("x" (my/speed-dial-jump "global" 6))
+  ("c" (my/speed-dial-jump "global" 7))
+  ("v" (my/speed-dial-jump "global" 8))
+  
+  ;; Right Hand
+  ("j" (my/speed-dial-jump my/current-speed-dial-tag 1))
+  ("k" (my/speed-dial-jump my/current-speed-dial-tag 2))
+  ("l" (my/speed-dial-jump my/current-speed-dial-tag 3))
+  (";" (my/speed-dial-jump my/current-speed-dial-tag 4))
+  ("m" (my/speed-dial-jump my/current-speed-dial-tag 5))
+  ("," (my/speed-dial-jump my/current-speed-dial-tag 6))
+  ("." (my/speed-dial-jump my/current-speed-dial-tag 7))
+  ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
+
+  ;; Controls
+  ("p" my/set-workspace-and-resume)
+  ("t" my/set-tag-and-resume)
+  ("q" nil)
+  ("<escape>" nil))
+
+;; Bind ONLY the Hydra to SPC a (it replaces all individual prefix keys)
+(define-key evil-normal-state-map (kbd "SPC a") 'hydra-speed-dial/body)
