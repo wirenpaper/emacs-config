@@ -474,52 +474,85 @@
 (define-key evil-normal-state-map (kbd "SPC b T") 'my/project-bookmark-jump-by-tag)
 
 ;; ==========================================
-;; 18. Harpoon-Style Tag Speed-Dial
+;; 18. Split-Keyboard Harpoon Speed-Dial
 ;; ==========================================
 
 (defvar my/current-speed-dial-tag nil
-  "The currently active tag locked in for speed-dialing.")
+  "The currently active tag locked in for right-hand speed-dialing.")
 
-(defun my/set-speed-dial-tag ()
-  "Lock in a specific tag to put its files on speed-dial keys (1-9)."
+(defun my/show-speed-dial-hud ()
+  "Show a unified HUD of both Left (global) and Right (dynamic) speed-dials."
   (interactive)
   (if-let ((pr (project-current)))
       (let* ((root (expand-file-name (project-root pr)))
-             ;; Get all project bookmarks
              (project-bms (cl-remove-if-not
                            (lambda (bm)
                              (let ((file (bookmark-get-filename bm)))
                                (and file (string-prefix-p root (expand-file-name file)))))
                            bookmark-alist))
-             ;; Get all unique tags in the project
+             
+             ;; 1. Process LEFT hand (always "global")
+             (global-bms (cl-remove-if-not
+                          (lambda (bm) (member "global" (bookmark-prop-get bm 'tags)))
+                          project-bms))
+             (sorted-global (sort (mapcar #'car global-bms) #'string<))
+             (left-keys '("a" "s" "d" "f" "z" "x" "c" "v"))
+             (left-hud (if sorted-global
+                           (mapconcat #'identity
+                                      (cl-loop for name in sorted-global
+                                               for i from 0
+                                               collect (format "[%s] %s" (or (nth i left-keys) "?") name))
+                                      " ")
+                         "Empty"))
+             
+             ;; 2. Process RIGHT hand (dynamic tag)
+             (right-hud (if my/current-speed-dial-tag
+                            (let* ((dynamic-bms (cl-remove-if-not
+                                                 (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags)))
+                                                 project-bms))
+                                   (sorted-dynamic (sort (mapcar #'car dynamic-bms) #'string<))
+                                   (right-keys '("j" "k" "l" ";" "m" "," "." "/")))
+                              (if sorted-dynamic
+                                  (mapconcat #'identity
+                                             (cl-loop for name in sorted-dynamic
+                                                      for i from 0
+                                                      collect (format "[%s] %s" (or (nth i right-keys) "?") name))
+                                             " ")
+                                "Empty"))
+                          "No tag locked")))
+        
+        ;; Print the unified layout!
+        (message "LEFT(global): %s   ||   RIGHT(%s): %s" 
+                 left-hud 
+                 (or my/current-speed-dial-tag "none") 
+                 right-hud))
+    (message "Not in a project!")))
+
+(defun my/set-speed-dial-tag ()
+  "Lock in a tag for the RIGHT hand keys and show the unified HUD."
+  (interactive)
+  (if-let ((pr (project-current)))
+      (let* ((root (expand-file-name (project-root pr)))
+             (project-bms (cl-remove-if-not
+                           (lambda (bm)
+                             (let ((file (bookmark-get-filename bm)))
+                               (and file (string-prefix-p root (expand-file-name file)))))
+                           bookmark-alist))
              (project-tags (cl-remove-duplicates
                             (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms))
                             :test #'string=)))
         (if (not project-tags)
             (message "No tags found! Use SPC b t to tag a file first.")
-          
-          ;; Ask user to pick a tag to lock in
-          (setq my/current-speed-dial-tag (completing-read "Select tag for speed-dial: " project-tags))
-          
-          ;; Find the files for this tag and sort them alphabetically (so the numbers never shift randomly)
-          (let* ((tagged-bms (cl-remove-if-not
-                              (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags)))
-                              project-bms))
-                 (sorted-bms (sort (mapcar #'car tagged-bms) #'string<))
-                 ;; Format them so the user sees which number belongs to which file
-                 (names-with-index (cl-loop for name in sorted-bms
-                                            for i from 1
-                                            collect (format "[%d] %s" i name))))
-            ;; Show the speed-dial list at the bottom of the screen!
-            (message "Locked '%s' -> %s" 
-                     my/current-speed-dial-tag 
-                     (mapconcat #'identity names-with-index " | ")))))
+          ;; Pick the dynamic tag
+          (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " project-tags))
+          ;; Show the updated HUD
+          (my/show-speed-dial-hud)))
     (message "You are not currently inside a project!")))
 
-(defun my/speed-dial-jump (num)
-  "Jump to the NUM-th bookmark of the active speed-dial tag."
-  (if (not my/current-speed-dial-tag)
-      (message "No speed-dial tag set! Use SPC b d to lock one in.")
+(defun my/speed-dial-jump (tag num)
+  "Jump to the NUM-th bookmark of TAG."
+  (if (not tag)
+      (message "No dynamic tag set for the right hand! Use SPC a t to lock one in.")
     (if-let ((pr (project-current)))
         (let* ((root (expand-file-name (project-root pr)))
                (project-bms (cl-remove-if-not
@@ -528,32 +561,46 @@
                                  (and file (string-prefix-p root (expand-file-name file)))))
                              bookmark-alist))
                (tagged-bms (cl-remove-if-not
-                            (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags)))
+                            (lambda (bm) (member tag (bookmark-prop-get bm 'tags)))
                             project-bms))
-               ;; Sort alphabetically again to ensure consistency
                (sorted-bms (sort (mapcar #'car tagged-bms) #'string<)))
           (if (or (< num 1) (> num (length sorted-bms)))
-              (message "No file at position [%d] for tag '%s'." num my/current-speed-dial-tag)
+              (message "No file at position %d for tag '%s'." num tag)
             (let ((target (nth (1- num) sorted-bms)))
               (bookmark-jump target)
-              (message "Speed-dial: %s" target))))
+              (message "Jumped to: %s" target))))
       (message "Not in a project!"))))
 
+;; ==========================================
 ;; -- Keybindings --
+;; ==========================================
 
-;; SPC b d: Lock in (Dial) a tag for speed-dialing
-(define-key evil-normal-state-map (kbd "SPC b d") 'my/set-speed-dial-tag)
+;; SPC a t: Choose Dynamic Tag (Right hand workspace)
+(define-key evil-normal-state-map (kbd "SPC a t") 'my/set-speed-dial-tag)
 
-;; -- Keybindings --
-(define-key evil-normal-state-map (kbd "SPC b d") 'my/set-speed-dial-tag)
+;; SPC a h: Show the HUD manually at any time
+(define-key evil-normal-state-map (kbd "SPC a h") 'my/show-speed-dial-hud)
 
-;; Hardcoded speed-dial keys
-(define-key evil-normal-state-map (kbd "SPC b 1") (lambda () (interactive) (my/speed-dial-jump 1)))
-(define-key evil-normal-state-map (kbd "SPC b 2") (lambda () (interactive) (my/speed-dial-jump 2)))
-(define-key evil-normal-state-map (kbd "SPC b 3") (lambda () (interactive) (my/speed-dial-jump 3)))
-(define-key evil-normal-state-map (kbd "SPC b 4") (lambda () (interactive) (my/speed-dial-jump 4)))
-(define-key evil-normal-state-map (kbd "SPC b 5") (lambda () (interactive) (my/speed-dial-jump 5)))
-(define-key evil-normal-state-map (kbd "SPC b 6") (lambda () (interactive) (my/speed-dial-jump 6)))
-(define-key evil-normal-state-map (kbd "SPC b 7") (lambda () (interactive) (my/speed-dial-jump 7)))
-(define-key evil-normal-state-map (kbd "SPC b 8") (lambda () (interactive) (my/speed-dial-jump 8)))
-(define-key evil-normal-state-map (kbd "SPC b 9") (lambda () (interactive) (my/speed-dial-jump 9)))
+;; ------------------------------------------
+;; LEFT HAND: Hardcoded to ALWAYS be "global"
+;; ------------------------------------------
+(define-key evil-normal-state-map (kbd "SPC a a") (lambda () (interactive) (my/speed-dial-jump "global" 1)))
+(define-key evil-normal-state-map (kbd "SPC a s") (lambda () (interactive) (my/speed-dial-jump "global" 2)))
+(define-key evil-normal-state-map (kbd "SPC a d") (lambda () (interactive) (my/speed-dial-jump "global" 3)))
+(define-key evil-normal-state-map (kbd "SPC a f") (lambda () (interactive) (my/speed-dial-jump "global" 4)))
+(define-key evil-normal-state-map (kbd "SPC a z") (lambda () (interactive) (my/speed-dial-jump "global" 5)))
+(define-key evil-normal-state-map (kbd "SPC a x") (lambda () (interactive) (my/speed-dial-jump "global" 6)))
+(define-key evil-normal-state-map (kbd "SPC a c") (lambda () (interactive) (my/speed-dial-jump "global" 7)))
+(define-key evil-normal-state-map (kbd "SPC a v") (lambda () (interactive) (my/speed-dial-jump "global" 8)))
+
+;; ------------------------------------------
+;; RIGHT HAND: Dynamically uses your chosen tag
+;; ------------------------------------------
+(define-key evil-normal-state-map (kbd "SPC a j") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 1)))
+(define-key evil-normal-state-map (kbd "SPC a k") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 2)))
+(define-key evil-normal-state-map (kbd "SPC a l") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 3)))
+(define-key evil-normal-state-map (kbd "SPC a ;") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 4)))
+(define-key evil-normal-state-map (kbd "SPC a m") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 5)))
+(define-key evil-normal-state-map (kbd "SPC a ,") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 6)))
+(define-key evil-normal-state-map (kbd "SPC a .") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 7)))
+(define-key evil-normal-state-map (kbd "SPC a /") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 8)))
