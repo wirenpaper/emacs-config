@@ -462,7 +462,7 @@
 (define-key evil-normal-state-map (kbd "SPC b t") 'my/bookmark-tag-current-file)
 
 ;; ==========================================
-;; 19. Split-Keyboard Speed-Dial (HYDRA HUD)
+;; 19. Split-Keyboard Speed-Dial (HYDRA HUD + MANAGER)
 ;; ==========================================
 
 ;; 1. Install Hydra
@@ -480,6 +480,15 @@
     (or (member proj-tag (bookmark-prop-get bm 'tags))
         (and file (string-prefix-p root (expand-file-name file))))))
 
+(defun my/get-workspace-bookmarks ()
+  "Return a list of bookmark names in the active workspace."
+  (bookmark-maybe-load-default-file)
+  (let ((root (my/get-workspace)))
+    (mapcar #'car
+            (cl-remove-if-not
+             (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root))
+             bookmark-alist))))
+
 (defun my/set-speed-dial-tag ()
   "Choose a tag for the RIGHT hand keys in the locked workspace."
   (interactive)
@@ -489,7 +498,7 @@
          (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
          (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags)))
     (if (not clean-tags)
-        (error "No tags found! Use SPC b t to tag a file first")
+        (message "No tags found! Press 'N' to tag a file first.")
       (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags)))))
 
 (defun my/speed-dial-jump (tag num)
@@ -506,7 +515,7 @@
         (let ((target (nth (1- num) sorted-bms)))
           (bookmark-jump target))))))
 
-;; --- HYDRA SPECIFIC CODE ---
+;; --- HYDRA HELPER & MANAGEMENT FUNCTIONS ---
 
 (defun my/sd-name (side num)
   "Helper for Hydra: fetch, pad, and truncate the bookmark name for the HUD."
@@ -524,58 +533,98 @@
              (target (nth (1- num) sorted-bms)))
         (when target
           (setq val target))))
-    ;; Pads to 20 spaces for perfect alignment, and adds "…" if it's too long
     (truncate-string-to-width val 20 0 ?\s "…")))
 
-;; Wrappers to reopen the Hydra menu automatically after setting workspace/tag
-(defun my/set-workspace-and-resume ()
+(defun my/hydra-tag-current-file ()
   (interactive)
-  (call-interactively 'my/set-workspace)
+  (call-interactively 'my/bookmark-tag-current-file)
   (hydra-speed-dial/body))
 
-(defun my/set-tag-and-resume ()
+(defun my/hydra-assign-tag ()
   (interactive)
-  (call-interactively 'my/set-speed-dial-tag)
+  (let ((bms (my/get-workspace-bookmarks)))
+    (if (not bms)
+        (message "No bookmarks! Press 'N' to tag current file first.")
+      (let* ((bm-name (completing-read "Select bookmark: " bms nil t))
+             (root (my/get-workspace))
+             (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+             (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
+             (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags))
+             (new-tag (completing-read (format "Add tag to '%s' (e.g. global, api): " bm-name) clean-tags)))
+        (let ((tags (bookmark-prop-get bm-name 'tags)))
+          (unless (member new-tag tags)
+            (push new-tag tags)
+            (bookmark-prop-set bm-name 'tags tags)
+            (bookmark-save)
+            (message "Added tag '%s' to '%s'" new-tag bm-name))))))
   (hydra-speed-dial/body))
 
-;; THE HYDRA HUD ITSELF
+(defun my/hydra-remove-tag ()
+  (interactive)
+  (let ((bms (my/get-workspace-bookmarks)))
+    (if (not bms)
+        (message "No bookmarks in this workspace!")
+      (let* ((bm-name (completing-read "Select bookmark: " bms nil t))
+             (tags (bookmark-prop-get bm-name 'tags))
+             (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
+        (if (not clean-tags)
+            (message "No removable tags on '%s'!" bm-name)
+          (let ((tag-to-remove (completing-read "Remove tag: " clean-tags nil t)))
+            (setq tags (remove tag-to-remove tags))
+            (bookmark-prop-set bm-name 'tags tags)
+            (bookmark-save)
+            (message "Removed tag '%s' from '%s'" tag-to-remove bm-name))))))
+  (hydra-speed-dial/body))
+
+(defun my/hydra-delete-bookmark ()
+  (interactive)
+  (let ((bms (my/get-workspace-bookmarks)))
+    (if (not bms)
+        (message "No bookmarks to delete in this workspace!")
+      (let ((bm-to-delete (completing-read "Delete bookmark: " bms nil t)))
+        (bookmark-delete bm-to-delete)
+        (bookmark-save)
+        (message "Deleted: %s" bm-to-delete))))
+  (hydra-speed-dial/body))
+
+;; Wrappers for native hydra controls
+(defun my/set-workspace-and-resume () (interactive) (call-interactively 'my/set-workspace) (hydra-speed-dial/body))
+(defun my/set-tag-and-resume () (interactive) (call-interactively 'my/set-speed-dial-tag) (hydra-speed-dial/body))
+
+;; THE HYDRA HUD
 (defhydra hydra-speed-dial (:color blue :hint nil)
   "
   ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
   ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")
 
-  ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)
-  ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^
-  _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)
-  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)
-  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)
-  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)
+  ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)    ^MANAGEMENT^
+  ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
+  _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _N_: Tag Current File (New)
+  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _A_: Add Tag to BM
+  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _R_: Remove Tag from BM
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _D_: Delete Bookmark
   _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)
-  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)
-  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)
-  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)
-
-  _p_: Lock Workspace       _t_: Lock Tag        _q_: Cancel
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  ^CONTROLS^
+  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^^^^^^^^^^
+  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
   "
   ;; Left Hand
-  ("a" (my/speed-dial-jump "global" 1))
-  ("s" (my/speed-dial-jump "global" 2))
-  ("d" (my/speed-dial-jump "global" 3))
-  ("f" (my/speed-dial-jump "global" 4))
-  ("z" (my/speed-dial-jump "global" 5))
-  ("x" (my/speed-dial-jump "global" 6))
-  ("c" (my/speed-dial-jump "global" 7))
-  ("v" (my/speed-dial-jump "global" 8))
+  ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
+  ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
+  ("z" (my/speed-dial-jump "global" 5)) ("x" (my/speed-dial-jump "global" 6))
+  ("c" (my/speed-dial-jump "global" 7)) ("v" (my/speed-dial-jump "global" 8))
   
   ;; Right Hand
-  ("j" (my/speed-dial-jump my/current-speed-dial-tag 1))
-  ("k" (my/speed-dial-jump my/current-speed-dial-tag 2))
-  ("l" (my/speed-dial-jump my/current-speed-dial-tag 3))
-  (";" (my/speed-dial-jump my/current-speed-dial-tag 4))
-  ("m" (my/speed-dial-jump my/current-speed-dial-tag 5))
-  ("," (my/speed-dial-jump my/current-speed-dial-tag 6))
-  ("." (my/speed-dial-jump my/current-speed-dial-tag 7))
-  ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
+  ("j" (my/speed-dial-jump my/current-speed-dial-tag 1)) ("k" (my/speed-dial-jump my/current-speed-dial-tag 2))
+  ("l" (my/speed-dial-jump my/current-speed-dial-tag 3)) (";" (my/speed-dial-jump my/current-speed-dial-tag 4))
+  ("m" (my/speed-dial-jump my/current-speed-dial-tag 5)) ("," (my/speed-dial-jump my/current-speed-dial-tag 6))
+  ("." (my/speed-dial-jump my/current-speed-dial-tag 7)) ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
+
+  ;; Management (Shift / Capital letters)
+  ("N" my/hydra-tag-current-file)
+  ("A" my/hydra-assign-tag)
+  ("R" my/hydra-remove-tag)
+  ("D" my/hydra-delete-bookmark)
 
   ;; Controls
   ("p" my/set-workspace-and-resume)
@@ -583,5 +632,5 @@
   ("q" nil)
   ("<escape>" nil))
 
-;; Bind ONLY the Hydra to SPC a (it replaces all individual prefix keys)
+;; Bind ONLY the Hydra to SPC a
 (define-key evil-normal-state-map (kbd "SPC a") 'hydra-speed-dial/body)
