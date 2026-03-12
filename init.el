@@ -420,7 +420,7 @@
 (defun my/set-workspace ()
   "Manually lock Emacs into a specific workspace using a target file."
   (interactive)
-  (let* ((target-file (read-file-name "Select workspace target file (e.g. ~/rnd/blog/blog.target): "))
+  (let* ((target-file (read-file-name "Select workspace target file: "))
          (root (expand-file-name (file-name-directory target-file))))
     (setq my/current-workspace-root root)
     (setq my/current-speed-dial-tag nil) ;; Clear right-hand tag on switch
@@ -446,7 +446,7 @@
          (proj-tag (concat "proj:" root))
          (bm-name (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
          (project-name (file-name-nondirectory (directory-file-name root)))
-         (new-tag (read-string (format "Tag %s for workspace '%s' (e.g. global, login): " bm-name project-name))))
+         (new-tag (read-string (format "Tag %s for workspace '%s': " bm-name project-name))))
     
     (unless (assoc bm-name bookmark-alist)
       (bookmark-set bm-name))
@@ -587,6 +587,31 @@
         (message "Deleted: %s" bm-to-delete))))
   (hydra-speed-dial/body))
 
+(defun my/hydra-wipe-tag ()
+  "Remove a specific tag from ALL bookmarks in the current workspace."
+  (interactive)
+  (let* ((root (my/get-workspace))
+         (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+         (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
+         (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags)))
+    (if (not clean-tags)
+        (message "No tags exist in this workspace!")
+      (let ((tag-to-nuke (completing-read "Wipe tag completely: " clean-tags nil t)))
+        ;; Loop through all project bookmarks and remove the tag
+        (dolist (bm project-bms)
+          (let* ((bm-name (car bm))
+                 (tags (bookmark-prop-get bm-name 'tags)))
+            (when (member tag-to-nuke tags)
+              (bookmark-prop-set bm-name 'tags (remove tag-to-nuke tags)))))
+        (bookmark-save)
+        
+        ;; If the tag we just wiped was currently locked to the Right Hand, unlock it
+        (when (string= my/current-speed-dial-tag tag-to-nuke)
+          (setq my/current-speed-dial-tag nil))
+        
+        (message "Wiped tag '%s' from all bookmarks." tag-to-nuke))))
+  (hydra-speed-dial/body))
+
 ;; Wrappers for native hydra controls
 (defun my/set-workspace-and-resume () (interactive) (call-interactively 'my/set-workspace) (hydra-speed-dial/body))
 (defun my/set-tag-and-resume () (interactive) (call-interactively 'my/set-speed-dial-tag) (hydra-speed-dial/body))
@@ -602,11 +627,12 @@
   _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _N_: Tag Current File (New)
   _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _A_: Add Tag to BM
   _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _R_: Remove Tag from BM
-  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _D_: Delete Bookmark
-  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)
-  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  ^CONTROLS^
-  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^^^^^^^^^^
-  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _W_: Wipe Tag Completely
+  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _D_: Delete Bookmark
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  
+  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^CONTROLS^
+  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
+                                                      _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
   "
   ;; Left Hand
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
@@ -624,6 +650,7 @@
   ("N" my/hydra-tag-current-file)
   ("A" my/hydra-assign-tag)
   ("R" my/hydra-remove-tag)
+  ("W" my/hydra-wipe-tag)    ;; <--- ADDED HERE
   ("D" my/hydra-delete-bookmark)
 
   ;; Controls
