@@ -6,3 +6,9 @@ init.el~
 .hook_files/
 bookmarks
 bookmarks~
+.org-id-locations
+eshell/
+nano.170092.save
+org-roam.db
+places
+transient/
