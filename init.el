@@ -410,180 +410,129 @@
 
 ;; Move the Bookmark+ Menu (bmenu) to SPC b l (List) so you can still access it!
 (define-key evil-normal-state-map (kbd "SPC b l") 'bookmark-bmenu-list)
+;; ==========================================
+;; 17 Manual Workspace State
+;; ==========================================
+(defvar my/current-workspace-root nil
+  "The manually selected workspace directory.")
+
+(defun my/set-workspace ()
+  "Manually lock Emacs into a specific workspace using a target file."
+  (interactive)
+  (let* ((target-file (read-file-name "Select workspace target file (e.g. ~/rnd/blog/blog.target): "))
+         (root (expand-file-name (file-name-directory target-file))))
+    (setq my/current-workspace-root root)
+    (setq my/current-speed-dial-tag nil) ;; Clear right-hand tag on switch
+    (message "Workspace locked to: %s" root)))
+
+(defun my/get-workspace ()
+  "Return the active workspace, or throw an error if none is set."
+  (unless my/current-workspace-root
+    (error "No workspace locked! Use SPC a p to select your target file"))
+  my/current-workspace-root)
+
+(define-key evil-normal-state-map (kbd "SPC a p") 'my/set-workspace)
 
 ;; ==========================================
-;; 17. Project-Scoped Bookmark Tags
+;; 18. Project-Scoped Tagging
 ;; ==========================================
-(require 'project)
-(require 'cl-lib)
+(require 'bookmark)
 
 (defun my/bookmark-tag-current-file ()
-  "Add a tag to the current file. Automatically bookmarks it if needed."
+  "Tag the current file and link it to the locked workspace."
   (interactive)
-  (let* ((bm-name (if buffer-file-name 
-                      (file-name-nondirectory buffer-file-name) 
-                    (buffer-name)))
-         (new-tag (read-string (format "Tag for %s (e.g. login, register): " bm-name))))
+  (let* ((root (my/get-workspace))  ;; <--- DECOUPLED!
+         (proj-tag (concat "proj:" root))
+         (bm-name (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
+         (project-name (file-name-nondirectory (directory-file-name root)))
+         (new-tag (read-string (format "Tag %s for workspace '%s' (e.g. global, login): " bm-name project-name))))
     
-    ;; 1. If it's not bookmarked yet, bookmark it instantly
     (unless (assoc bm-name bookmark-alist)
       (bookmark-set bm-name))
     
-    ;; 2. Fetch existing tags for this bookmark, add the new one, and save
     (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
-      (unless (member new-tag existing-tags)
-        (bookmark-prop-set bm-name 'tags (cons new-tag existing-tags)))
+      (unless (member new-tag existing-tags) (push new-tag existing-tags))
+      (unless (member proj-tag existing-tags) (push proj-tag existing-tags))
+      
+      (bookmark-prop-set bm-name 'tags existing-tags)
       (bookmark-save)
-      (message "Successfully added tag '%s' to '%s'!" new-tag bm-name))))
+      (message "Successfully tagged '%s' as [%s] in '%s'" bm-name new-tag project-name))))
 
-(defun my/project-bookmark-jump-by-tag ()
-  "Filter project bookmarks by a specific tag and jump to one."
-  (interactive)
-  (if-let ((pr (project-current)))
-      (let* ((root (expand-file-name (project-root pr)))
-             ;; 1. Get all bookmarks in the current project
-             (project-bms (cl-remove-if-not
-                           (lambda (bm)
-                             (let ((file (bookmark-get-filename bm)))
-                               (and file (string-prefix-p root (expand-file-name file)))))
-                           bookmark-alist))
-             ;; 2. Extract every unique tag used inside this project
-             (project-tags (cl-remove-duplicates
-                            (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms))
-                            :test #'string=)))
-        (if (not project-tags)
-            (message "No tags found in this project! Use SPC b t to tag a file.")
-          ;; 3. Ask you which tag you want to look at (e.g., "login")
-          (let* ((selected-tag (completing-read "Select feature tag: " project-tags))
-                 ;; 4. Filter the bookmarks to ONLY show files with that tag
-                 (tagged-bms (cl-remove-if-not
-                              (lambda (bm)
-                                (member selected-tag (bookmark-prop-get bm 'tags)))
-                              project-bms))
-                 (names (mapcar #'car tagged-bms))
-                 ;; 5. Ask which specific file from that tag you want to open
-                 (choice (completing-read (format "Files tagged [%s]: " selected-tag) names)))
-            (bookmark-jump choice))))
-    (message "You are not currently inside a project!")))
-
-;; -- Keybindings --
-;; SPC b t: Tag the current file
 (define-key evil-normal-state-map (kbd "SPC b t") 'my/bookmark-tag-current-file)
 
-;; SPC b T (Shift+t): Jump to a file by its Tag
-(define-key evil-normal-state-map (kbd "SPC b T") 'my/project-bookmark-jump-by-tag)
-
 ;; ==========================================
-;; 18. Split-Keyboard Harpoon Speed-Dial
+;; 19. Split-Keyboard Harpoon Speed-Dial
 ;; ==========================================
+(require 'cl-lib)
 
 (defvar my/current-speed-dial-tag nil
-  "The currently active tag locked in for right-hand speed-dialing.")
+  "The currently active dynamic tag (Right Hand).")
+
+(defun my/bookmark-belongs-to-workspace-p (bm root)
+  "Check if bookmark BM belongs to the active ROOT."
+  (let ((file (bookmark-get-filename bm))
+        (proj-tag (concat "proj:" root)))
+    (or (member proj-tag (bookmark-prop-get bm 'tags))
+        (and file (string-prefix-p root (expand-file-name file))))))
 
 (defun my/show-speed-dial-hud ()
-  "Show a unified HUD of both Left (global) and Right (dynamic) speed-dials."
+  "Show the unified HUD for the locked workspace."
   (interactive)
-  (if-let ((pr (project-current)))
-      (let* ((root (expand-file-name (project-root pr)))
-             (project-bms (cl-remove-if-not
-                           (lambda (bm)
-                             (let ((file (bookmark-get-filename bm)))
-                               (and file (string-prefix-p root (expand-file-name file)))))
-                           bookmark-alist))
-             
-             ;; 1. Process LEFT hand (always "global")
-             (global-bms (cl-remove-if-not
-                          (lambda (bm) (member "global" (bookmark-prop-get bm 'tags)))
-                          project-bms))
-             (sorted-global (sort (mapcar #'car global-bms) #'string<))
-             (left-keys '("a" "s" "d" "f" "z" "x" "c" "v"))
-             (left-hud (if sorted-global
-                           (mapconcat #'identity
-                                      (cl-loop for name in sorted-global
-                                               for i from 0
-                                               collect (format "[%s] %s" (or (nth i left-keys) "?") name))
-                                      " ")
-                         "Empty"))
-             
-             ;; 2. Process RIGHT hand (dynamic tag)
-             (right-hud (if my/current-speed-dial-tag
-                            (let* ((dynamic-bms (cl-remove-if-not
-                                                 (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags)))
-                                                 project-bms))
-                                   (sorted-dynamic (sort (mapcar #'car dynamic-bms) #'string<))
-                                   (right-keys '("j" "k" "l" ";" "m" "," "." "/")))
-                              (if sorted-dynamic
-                                  (mapconcat #'identity
-                                             (cl-loop for name in sorted-dynamic
-                                                      for i from 0
-                                                      collect (format "[%s] %s" (or (nth i right-keys) "?") name))
-                                             " ")
-                                "Empty"))
-                          "No tag locked")))
-        
-        ;; Print the unified layout!
-        (message "LEFT(global): %s   ||   RIGHT(%s): %s" 
-                 left-hud 
-                 (or my/current-speed-dial-tag "none") 
-                 right-hud))
-    (message "Not in a project!")))
+  (let* ((root (my/get-workspace)) ;; <--- DECOUPLED!
+         (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+         
+         ;; LEFT hand (global)
+         (global-bms (cl-remove-if-not (lambda (bm) (member "global" (bookmark-prop-get bm 'tags))) project-bms))
+         (sorted-global (sort (mapcar #'car global-bms) #'string<))
+         (left-keys '("a" "s" "d" "f" "z" "x" "c" "v"))
+         (left-hud (if sorted-global
+                       (mapconcat #'identity (cl-loop for name in sorted-global for i from 0
+                                                      collect (format "[%s] %s" (or (nth i left-keys) "?") name)) " ")
+                     "Empty"))
+         
+         ;; RIGHT hand (dynamic)
+         (right-hud (if my/current-speed-dial-tag
+                        (let* ((dynamic-bms (cl-remove-if-not (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags))) project-bms))
+                               (sorted-dynamic (sort (mapcar #'car dynamic-bms) #'string<))
+                               (right-keys '("j" "k" "l" ";" "m" "," "." "/")))
+                          (if sorted-dynamic
+                              (mapconcat #'identity (cl-loop for name in sorted-dynamic for i from 0
+                                                             collect (format "[%s] %s" (or (nth i right-keys) "?") name)) " ")
+                            "Empty"))
+                      "No tag locked")))
+    (message "LEFT(global): %s   ||   RIGHT(%s): %s" left-hud (or my/current-speed-dial-tag "none") right-hud)))
 
 (defun my/set-speed-dial-tag ()
-  "Lock in a tag for the RIGHT hand keys and show the unified HUD."
+  "Choose a tag for the RIGHT hand keys in the locked workspace."
   (interactive)
-  (if-let ((pr (project-current)))
-      (let* ((root (expand-file-name (project-root pr)))
-             (project-bms (cl-remove-if-not
-                           (lambda (bm)
-                             (let ((file (bookmark-get-filename bm)))
-                               (and file (string-prefix-p root (expand-file-name file)))))
-                           bookmark-alist))
-             (project-tags (cl-remove-duplicates
-                            (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms))
-                            :test #'string=)))
-        (if (not project-tags)
-            (message "No tags found! Use SPC b t to tag a file first.")
-          ;; Pick the dynamic tag
-          (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " project-tags))
-          ;; Show the updated HUD
-          (my/show-speed-dial-hud)))
-    (message "You are not currently inside a project!")))
+  (let* ((root (my/get-workspace)) ;; <--- DECOUPLED!
+         (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+         (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
+         (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags)))
+    (if (not clean-tags)
+        (message "No tags found! Use SPC b t to tag a file first.")
+      (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags))
+      (my/show-speed-dial-hud))))
 
 (defun my/speed-dial-jump (tag num)
-  "Jump to the NUM-th bookmark of TAG."
-  (if (not tag)
-      (message "No dynamic tag set for the right hand! Use SPC a t to lock one in.")
-    (if-let ((pr (project-current)))
-        (let* ((root (expand-file-name (project-root pr)))
-               (project-bms (cl-remove-if-not
-                             (lambda (bm)
-                               (let ((file (bookmark-get-filename bm)))
-                                 (and file (string-prefix-p root (expand-file-name file)))))
-                             bookmark-alist))
-               (tagged-bms (cl-remove-if-not
-                            (lambda (bm) (member tag (bookmark-prop-get bm 'tags)))
-                            project-bms))
-               (sorted-bms (sort (mapcar #'car tagged-bms) #'string<)))
-          (if (or (< num 1) (> num (length sorted-bms)))
-              (message "No file at position %d for tag '%s'." num tag)
-            (let ((target (nth (1- num) sorted-bms)))
-              (bookmark-jump target)
-              (message "Jumped to: %s" target))))
-      (message "Not in a project!"))))
+  "Jump to the NUM-th bookmark of TAG in the locked workspace."
+  (let* ((root (my/get-workspace)) ;; <--- DECOUPLED!
+         (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+         (tagged-bms (cl-remove-if-not (lambda (bm) (member tag (bookmark-prop-get bm 'tags))) project-bms))
+         (sorted-bms (sort (mapcar #'car tagged-bms) #'string<)))
+    (if (not tag)
+        (message "No dynamic tag set for the right hand! Use SPC a t to lock one in.")
+      (if (or (< num 1) (> num (length sorted-bms)))
+          (message "No file at position %d for tag '%s'." num tag)
+        (let ((target (nth (1- num) sorted-bms)))
+          (bookmark-jump target)
+          (message "Jumped to: %s" target))))))
 
-;; ==========================================
-;; -- Keybindings --
-;; ==========================================
-
-;; SPC a t: Choose Dynamic Tag (Right hand workspace)
+;; --- Keybindings (Same as before) ---
 (define-key evil-normal-state-map (kbd "SPC a t") 'my/set-speed-dial-tag)
-
-;; SPC a h: Show the HUD manually at any time
 (define-key evil-normal-state-map (kbd "SPC a h") 'my/show-speed-dial-hud)
 
-;; ------------------------------------------
-;; LEFT HAND: Hardcoded to ALWAYS be "global"
-;; ------------------------------------------
+;; Left Hand
 (define-key evil-normal-state-map (kbd "SPC a a") (lambda () (interactive) (my/speed-dial-jump "global" 1)))
 (define-key evil-normal-state-map (kbd "SPC a s") (lambda () (interactive) (my/speed-dial-jump "global" 2)))
 (define-key evil-normal-state-map (kbd "SPC a d") (lambda () (interactive) (my/speed-dial-jump "global" 3)))
@@ -593,9 +542,7 @@
 (define-key evil-normal-state-map (kbd "SPC a c") (lambda () (interactive) (my/speed-dial-jump "global" 7)))
 (define-key evil-normal-state-map (kbd "SPC a v") (lambda () (interactive) (my/speed-dial-jump "global" 8)))
 
-;; ------------------------------------------
-;; RIGHT HAND: Dynamically uses your chosen tag
-;; ------------------------------------------
+;; Right Hand
 (define-key evil-normal-state-map (kbd "SPC a j") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 1)))
 (define-key evil-normal-state-map (kbd "SPC a k") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 2)))
 (define-key evil-normal-state-map (kbd "SPC a l") (lambda () (interactive) (my/speed-dial-jump my/current-speed-dial-tag 3)))
