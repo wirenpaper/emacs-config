@@ -169,7 +169,7 @@
  ;; If you edit it by hand, you could mess it up, so be careful.
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
- '(bmkp-last-as-first-bookmark-file "/home/saifr/.emacs.d/bookmarks")
+ '(bmkp-last-as-first-bookmark-file "~/.emacs.d/bookmarks")
  '(package-selected-packages nil))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
@@ -370,6 +370,7 @@
 (defun my/project-bookmark-jump ()
   "Filter your master bookmarks and jump only to those inside the current project."
   (interactive)
+  (bookmark-maybe-load-default-file) ;; <--- THE FIX
   ;; 1. Check if we are currently inside a project (e.g., a git repo)
   (if-let ((pr (project-current)))
       (let* ((root (expand-file-name (project-root pr)))
@@ -478,7 +479,8 @@
 (defun my/show-speed-dial-hud ()
   "Show the unified HUD for the locked workspace."
   (interactive)
-  (let* ((root (my/get-workspace)) ;; <--- DECOUPLED!
+  (bookmark-maybe-load-default-file) ;; <--- THE FIX
+  (let* ((root (my/get-workspace))
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
          
          ;; LEFT hand (global)
@@ -505,7 +507,8 @@
 (defun my/set-speed-dial-tag ()
   "Choose a tag for the RIGHT hand keys in the locked workspace."
   (interactive)
-  (let* ((root (my/get-workspace)) ;; <--- DECOUPLED!
+  (bookmark-maybe-load-default-file) ;; <--- THE FIX: Force Emacs to load bookmarks
+  (let* ((root (my/get-workspace)) 
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
          (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
          (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags)))
@@ -516,7 +519,8 @@
 
 (defun my/speed-dial-jump (tag num)
   "Jump to the NUM-th bookmark of TAG in the locked workspace."
-  (let* ((root (my/get-workspace)) ;; <--- DECOUPLED!
+  (bookmark-maybe-load-default-file) ;; <--- THE FIX
+  (let* ((root (my/get-workspace))
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
          (tagged-bms (cl-remove-if-not (lambda (bm) (member tag (bookmark-prop-get bm 'tags))) project-bms))
          (sorted-bms (sort (mapcar #'car tagged-bms) #'string<)))
