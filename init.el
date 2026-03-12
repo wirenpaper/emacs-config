@@ -507,15 +507,76 @@
   (let* ((root (my/get-workspace))
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
          (tagged-bms (cl-remove-if-not (lambda (bm) (member tag (bookmark-prop-get bm 'tags))) project-bms))
-         (sorted-bms (sort (mapcar #'car tagged-bms) #'string<)))
+         ;; NEW: Use absolute slots
+         (slotted-bms (my/get-bookmarks-in-slots (mapcar #'car tagged-bms) tag)))
     (if (not tag)
         (message "No dynamic tag set for the right hand! Press 't' to lock one in.")
-      (if (or (< num 1) (> num (length sorted-bms)))
-          (message "Empty slot")
-        (let ((target (nth (1- num) sorted-bms)))
-          (bookmark-jump target))))))
+      (let ((target (nth (1- num) slotted-bms)))
+        (if target
+            (bookmark-jump target)
+          (message "Empty slot"))))))
 
 ;; --- HYDRA HELPER & MANAGEMENT FUNCTIONS ---
+(defun my/get-bookmarks-in-slots (bm-names tag)
+  "Distribute BM-NAMES into an 8-slot list based on their 'slot-TAG' property.
+Unassigned bookmarks automatically fill any remaining empty gaps."
+  (let* ((prop (intern (concat "slot-" tag)))
+         (slots (make-vector 8 nil))
+         (unassigned nil))
+    
+    ;; Pass 1: Place manually pinned bookmarks into their exact slots
+    (dolist (bm bm-names)
+      (let ((slot-num (bookmark-prop-get bm prop)))
+        (if (and (integerp slot-num) (>= slot-num 1) (<= slot-num 8))
+            (aset slots (1- slot-num) bm)
+          (push bm unassigned))))
+    
+    ;; Pass 2: Sort the remaining unassigned bookmarks alphabetically
+    (setq unassigned (sort unassigned #'string<))
+    
+    ;; Pass 3: Fill any remaining gaps on the board with the unassigned ones
+    (dotimes (i 8)
+      (when (and (null (aref slots i)) unassigned)
+        (aset slots i (pop unassigned))))
+    
+    ;; Convert vector back to a standard list for the Hydra
+    (append slots nil)))
+
+(defun my/hydra-assign-slot ()
+  "Manually assign a bookmark to a specific slot (1-8) on the board."
+  (interactive)
+  (let ((bms (my/get-workspace-bookmarks)))
+    (if (not bms)
+        (message "No bookmarks available to move!")
+      (let* ((bm-name (completing-read "Select bookmark to move: " bms nil t))
+             (tags (bookmark-prop-get bm-name 'tags))
+             (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
+        
+        (if (not clean-tags)
+            (message "Bookmark has no assigned tags!")
+          (let* ((target-tag (if (= (length clean-tags) 1)
+                                 (car clean-tags)
+                               (completing-read "Which tag's board? " clean-tags nil t)))
+                 (slot-str (read-string "Enter slot number to pin to (1-8): "))
+                 (slot-num (string-to-number slot-str))
+                 (prop (intern (concat "slot-" target-tag))))
+            
+            (if (and (>= slot-num 1) (<= slot-num 8))
+                (progn
+                  ;; Kick out any other bookmark currently occupying this exact slot
+                  (dolist (other-bm (mapcar #'car bookmark-alist))
+                    (when (and (not (string= other-bm bm-name))
+                               (eq (bookmark-prop-get other-bm prop) slot-num))
+                      (bookmark-prop-set other-bm prop nil)))
+                  
+                  ;; Assign the slot to our chosen bookmark
+                  (bookmark-prop-set bm-name prop slot-num)
+                  (bookmark-save)
+                  (message "Pinned '%s' to slot %d on the [%s] board!" bm-name slot-num target-tag))
+              (message "Invalid slot number! Must be between 1 and 8.")))))))
+  
+  ;; Resume the HUD to see the changes immediately
+  (hydra-speed-dial/body))
 
 (defun my/hydra-quick-tag-current ()
   "Prompt to tag the currently opened file to either 'global' or the active dynamic tag."
@@ -564,8 +625,10 @@
                     (if my/current-speed-dial-tag
                         (cl-remove-if-not (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags))) project-bms)
                       nil)))
-             (sorted-bms (sort (mapcar #'car bms) #'string<))
-             (target (nth (1- num) sorted-bms)))
+             ;; NEW: Use absolute slots
+             (active-tag (if (eq side 'left) "global" my/current-speed-dial-tag))
+             (slotted-bms (my/get-bookmarks-in-slots (mapcar #'car bms) active-tag))
+             (target (nth (1- num) slotted-bms)))
         (when target
           (setq val target))))
     (truncate-string-to-width val 20 0 ?\s "…")))
@@ -661,12 +724,12 @@
   ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
   _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _N_: Tag Current File (New Tag)
   _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _T_: Tag Current File (Active Tag)
-  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _A_: Add Tag to BM
-  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _R_: Remove Tag from BM
-  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _W_: Wipe Tag Completely
-  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  _D_: Delete Bookmark
-  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^CONTROLS^
-  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
+  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _M_: Move/Pin to Slot       
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _A_: Add Tag to BM
+  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _R_: Remove Tag from BM
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  _W_: Wipe Tag Completely
+  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  _D_: Delete Bookmark
+  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^CONTROLS^
                                                       _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
   "
   ;; Left Hand
@@ -683,7 +746,8 @@
 
   ;; Management (Shift / Capital letters)
   ("N" my/hydra-tag-current-file)
-  ("T" my/hydra-quick-tag-current)    ;; <--- ADDED HERE
+  ("T" my/hydra-quick-tag-current)
+  ("M" my/hydra-assign-slot)         ;; <--- ADDED HERE
   ("A" my/hydra-assign-tag)
   ("R" my/hydra-remove-tag)
   ("W" my/hydra-wipe-tag)    
