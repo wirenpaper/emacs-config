@@ -518,32 +518,38 @@
 ;; --- HYDRA HELPER & MANAGEMENT FUNCTIONS ---
 
 (defun my/hydra-quick-tag-current ()
-  "Instantly tag the currently opened file with the active Right-Hand tag."
+  "Prompt to tag the currently opened file to either 'global' or the active dynamic tag."
   (interactive)
+  (bookmark-maybe-load-default-file)
   (let* ((root (my/get-workspace))
          (proj-tag (concat "proj:" root))
-         (current-tag my/current-speed-dial-tag)
-         (bm-name (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name))))
+         (bm-name (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
+         
+         ;; Create the choices for the prompt. 
+         ;; 'global' is always an option. If a right-hand tag is locked, add it too.
+         (choices (if my/current-speed-dial-tag
+                      (list "global" my/current-speed-dial-tag)
+                    (list "global")))
+         
+         ;; Ask the user which side/tag they want to assign
+         (selected-tag (completing-read "Tag current file to: " choices nil t)))
     
-    (if (not current-tag)
-        (message "No dynamic tag locked! Press 't' to select one first.")
+    ;; Automatically bookmark the file if it isn't bookmarked yet
+    (unless (assoc bm-name bookmark-alist)
+      (bookmark-set bm-name))
+    
+    ;; Grab existing tags and apply the chosen tag + workspace tag
+    (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
+      (unless (member selected-tag existing-tags)
+        (push selected-tag existing-tags))
+      (unless (member proj-tag existing-tags)
+        (push proj-tag existing-tags))
       
-      ;; Automatically bookmark the file if it isn't bookmarked yet
-      (unless (assoc bm-name bookmark-alist)
-        (bookmark-set bm-name))
-      
-      ;; Grab existing tags and apply the current tag + workspace tag
-      (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
-        (unless (member current-tag existing-tags)
-          (push current-tag existing-tags))
-        (unless (member proj-tag existing-tags)
-          (push proj-tag existing-tags))
-        
-        (bookmark-prop-set bm-name 'tags existing-tags)
-        (bookmark-save)
-        (message "Quick-tagged '%s' as [%s]" bm-name current-tag))))
+      (bookmark-prop-set bm-name 'tags existing-tags)
+      (bookmark-save)
+      (message "Quick-tagged '%s' as [%s]" bm-name selected-tag)))
   
-  ;; Resume the Hydra HUD
+  ;; Resume the Hydra HUD so you can see your update instantly
   (hydra-speed-dial/body))
 
 (defun my/sd-name (side num)
