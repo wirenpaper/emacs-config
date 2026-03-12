@@ -517,6 +517,35 @@
 
 ;; --- HYDRA HELPER & MANAGEMENT FUNCTIONS ---
 
+(defun my/hydra-quick-tag-current ()
+  "Instantly tag the currently opened file with the active Right-Hand tag."
+  (interactive)
+  (let* ((root (my/get-workspace))
+         (proj-tag (concat "proj:" root))
+         (current-tag my/current-speed-dial-tag)
+         (bm-name (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name))))
+    
+    (if (not current-tag)
+        (message "No dynamic tag locked! Press 't' to select one first.")
+      
+      ;; Automatically bookmark the file if it isn't bookmarked yet
+      (unless (assoc bm-name bookmark-alist)
+        (bookmark-set bm-name))
+      
+      ;; Grab existing tags and apply the current tag + workspace tag
+      (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
+        (unless (member current-tag existing-tags)
+          (push current-tag existing-tags))
+        (unless (member proj-tag existing-tags)
+          (push proj-tag existing-tags))
+        
+        (bookmark-prop-set bm-name 'tags existing-tags)
+        (bookmark-save)
+        (message "Quick-tagged '%s' as [%s]" bm-name current-tag))))
+  
+  ;; Resume the Hydra HUD
+  (hydra-speed-dial/body))
+
 (defun my/sd-name (side num)
   "Helper for Hydra: fetch, pad, and truncate the bookmark name for the HUD."
   (bookmark-maybe-load-default-file)
@@ -624,12 +653,12 @@
 
   ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)    ^MANAGEMENT^
   ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
-  _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _N_: Tag Current File (New)
-  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _A_: Add Tag to BM
-  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _R_: Remove Tag from BM
-  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _W_: Wipe Tag Completely
-  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _D_: Delete Bookmark
-  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  
+  _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _N_: Tag Current File (New Tag)
+  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _T_: Tag Current File (Active Tag)
+  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _A_: Add Tag to BM
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _R_: Remove Tag from BM
+  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _W_: Wipe Tag Completely
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  _D_: Delete Bookmark
   _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^CONTROLS^
   _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
                                                       _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
@@ -648,9 +677,10 @@
 
   ;; Management (Shift / Capital letters)
   ("N" my/hydra-tag-current-file)
+  ("T" my/hydra-quick-tag-current)    ;; <--- ADDED HERE
   ("A" my/hydra-assign-tag)
   ("R" my/hydra-remove-tag)
-  ("W" my/hydra-wipe-tag)    ;; <--- ADDED HERE
+  ("W" my/hydra-wipe-tag)    
   ("D" my/hydra-delete-bookmark)
 
   ;; Controls
