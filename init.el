@@ -554,9 +554,9 @@
           ;; 3. If moving between Left (Global) and Right (Dynamic), swap the tags!
           (when (not (string= old-tag new-tag))
             (let ((tags (bookmark-prop-get bm-name 'tags)))
-              (setq tags (remove old-tag tags))            ;; Remove old board
+              (setq tags (remove old-tag tags))
               (unless (member new-tag tags)
-                (push new-tag tags))                       ;; Add new board
+                (push new-tag tags))
               (bookmark-prop-set bm-name 'tags tags)))
 
           ;; 4. Save new location
@@ -568,7 +568,7 @@
           (setq my/pending-move-bm nil)
           (setq my/pending-move-board nil)
 
-          (message "Moved '%s' to slot %d on [%s]!" bm-name num new-tag))
+          (message "Moved '%s' to slot %d on [%s]!" (file-name-nondirectory bm-name) num new-tag))
         
         ;; Keep Hydra open to see the new layout!
         (hydra-speed-dial/body))
@@ -579,13 +579,11 @@
             (message "That slot is already empty!")
           (let* ((tags (bookmark-prop-get target 'tags))
                  (prop (intern (concat "slot-" tag))))
-            ;; Remove the specific tag (left=global, right=dynamic)
             (setq tags (remove tag tags))
             (bookmark-prop-set target 'tags tags)
-            ;; Also clear its specific slot position for this tag
             (bookmark-prop-set target prop nil)
             (bookmark-save)
-            (message "Untagged '%s' from [%s]" target tag)))
+            (message "Untagged '%s' from [%s]" (file-name-nondirectory target) tag)))
         
         ;; Reset mode back to normal and keep Hydra open
         (setq my/speed-dial-mode 'normal)
@@ -598,28 +596,19 @@
 ;; --- HYDRA HELPER & MANAGEMENT FUNCTIONS ---
 
 (defun my/get-bookmarks-in-slots (bm-names tag)
-  "Distribute BM-NAMES into an 8-slot list based on their 'slot-TAG' property.
-Unassigned bookmarks automatically fill any remaining empty gaps."
+  "Distribute BM-NAMES into an 8-slot list based on their 'slot-TAG' property."
   (let* ((prop (intern (concat "slot-" tag)))
          (slots (make-vector 8 nil))
          (unassigned nil))
-    
-    ;; Pass 1: Place manually pinned bookmarks into their exact slots
     (dolist (bm bm-names)
       (let ((slot-num (bookmark-prop-get bm prop)))
         (if (and (integerp slot-num) (>= slot-num 1) (<= slot-num 8))
             (aset slots (1- slot-num) bm)
           (push bm unassigned))))
-    
-    ;; Pass 2: Sort the remaining unassigned bookmarks alphabetically
     (setq unassigned (sort unassigned #'string<))
-    
-    ;; Pass 3: Fill any remaining gaps on the board with the unassigned ones
     (dotimes (i 8)
       (when (and (null (aref slots i)) unassigned)
         (aset slots i (pop unassigned))))
-    
-    ;; Convert vector back to a standard list for the Hydra
     (append slots nil)))
 
 (defun my/hydra-start-move ()
@@ -627,10 +616,9 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
   (interactive)
   (if (eq my/speed-dial-mode 'normal)
       (setq my/speed-dial-mode 'pick)
-    (progn ;; Cancel if pressed again
-      (setq my/speed-dial-mode 'normal)
-      (setq my/pending-move-bm nil)
-      (setq my/pending-move-board nil)))
+    (progn (setq my/speed-dial-mode 'normal)
+           (setq my/pending-move-bm nil)
+           (setq my/pending-move-board nil)))
   (hydra-speed-dial/body))
 
 (defun my/hydra-start-untag ()
@@ -638,10 +626,9 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
   (interactive)
   (if (eq my/speed-dial-mode 'normal)
       (setq my/speed-dial-mode 'untag)
-    (progn ;; Cancel if pressed again
-      (setq my/speed-dial-mode 'normal)
-      (setq my/pending-move-bm nil)
-      (setq my/pending-move-board nil)))
+    (progn (setq my/speed-dial-mode 'normal)
+           (setq my/pending-move-bm nil)
+           (setq my/pending-move-board nil)))
   (hydra-speed-dial/body))
 
 (defun my/hydra-quit ()
@@ -651,28 +638,34 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
   (setq my/pending-move-bm nil)
   (setq my/pending-move-board nil))
 
+(defun my/bookmark-set-absolute ()
+  "Bookmark the current buffer using its absolute path to avoid naming collisions."
+  (interactive)
+  (let* ((default-name (if buffer-file-name
+                           (expand-file-name buffer-file-name)
+                         (buffer-name)))
+         (bm-name (read-string (format "Set bookmark (%s): " default-name)
+                               nil nil default-name)))
+    (bookmark-set bm-name)))
+
 (defun my/hydra-quick-tag-current ()
-  "Prompt to tag the currently opened file to either 'global' or the active dynamic tag."
+  "Prompt to tag the currently opened file using its ABSOLUTE path."
   (interactive)
   (bookmark-maybe-load-default-file)
   (let* ((root (my/get-workspace))
          (proj-tag (concat "proj:" root))
-         (bm-name (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
-         
-         ;; Create the choices for the prompt. 
-         ;; 'global' is always an option. If a right-hand tag is locked, add it too.
+         ;; CHANGED: Use expand-file-name to grab the full absolute path
+         (bm-name (if buffer-file-name 
+                      (expand-file-name buffer-file-name) 
+                    (buffer-name)))
          (choices (if my/current-speed-dial-tag
                       (list "global" my/current-speed-dial-tag)
                     (list "global")))
-         
-         ;; Ask the user which side/tag they want to assign
          (selected-tag (completing-read "Tag current file to: " choices nil t)))
     
-    ;; Automatically bookmark the file if it isn't bookmarked yet
     (unless (assoc bm-name bookmark-alist)
       (bookmark-set bm-name))
     
-    ;; Grab existing tags and apply the chosen tag + workspace tag
     (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
       (unless (member selected-tag existing-tags)
         (push selected-tag existing-tags))
@@ -681,9 +674,9 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
       
       (bookmark-prop-set bm-name 'tags existing-tags)
       (bookmark-save)
-      (message "Quick-tagged '%s' as [%s]" bm-name selected-tag)))
+      ;; Print only the filename to the echo area to keep it tidy
+      (message "Quick-tagged '%s' as [%s]" (file-name-nondirectory bm-name) selected-tag)))
   
-  ;; Resume the Hydra HUD so you can see your update instantly
   (hydra-speed-dial/body))
 
 (defun my/sd-name (side num)
@@ -698,17 +691,18 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
                     (if my/current-speed-dial-tag
                         (cl-remove-if-not (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags))) project-bms)
                       nil)))
-             ;; NEW: Use absolute slots
              (active-tag (if (eq side 'left) "global" my/current-speed-dial-tag))
              (slotted-bms (my/get-bookmarks-in-slots (mapcar #'car bms) active-tag))
              (target (nth (1- num) slotted-bms)))
         (when target
-          (setq val target))))
+          ;; CHANGED: If the bookmark name is an absolute path, only display the file name in the HUD!
+          (setq val (if (file-name-absolute-p target)
+                        (file-name-nondirectory target)
+                      target)))))
     (truncate-string-to-width val 20 0 ?\s "…")))
 
 (defun my/hydra-create-tag ()
-  "Prompt for a new tag name and lock it to the right hand.
-You can then populate it by tagging the current file ('T') or moving items ('M')."
+  "Prompt for a new tag name and lock it to the right hand."
   (interactive)
   (let ((new-tag (read-string "Create new tag: ")))
     (if (string= "" new-tag)
@@ -727,18 +721,14 @@ You can then populate it by tagging the current file ('T') or moving items ('M')
     (if (not clean-tags)
         (message "No tags exist in this workspace!")
       (let ((tag-to-nuke (completing-read "Wipe tag completely: " clean-tags nil t)))
-        ;; Loop through all project bookmarks and remove the tag
         (dolist (bm project-bms)
           (let* ((bm-name (car bm))
                  (tags (bookmark-prop-get bm-name 'tags)))
             (when (member tag-to-nuke tags)
               (bookmark-prop-set bm-name 'tags (remove tag-to-nuke tags)))))
         (bookmark-save)
-        
-        ;; If the tag we just wiped was currently locked to the Right Hand, unlock it
         (when (string= my/current-speed-dial-tag tag-to-nuke)
           (setq my/current-speed-dial-tag nil))
-        
         (message "Wiped tag '%s' from all bookmarks." tag-to-nuke))))
   (hydra-speed-dial/body))
 
@@ -750,7 +740,7 @@ You can then populate it by tagging the current file ('T') or moving items ('M')
 (defhydra hydra-speed-dial (:color blue :hint nil)
   "
   ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
-  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>> [MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" my/pending-move-bm)) ((eq my/speed-dial-mode 'untag) \"\n\n  >>> [UNTAG MODE] PRESS THE KEY OF THE SLOT YOU WANT TO UNTAG <<<\") (t \"\"))
+  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>> [MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" (if (and my/pending-move-bm (file-name-absolute-p my/pending-move-bm)) (file-name-nondirectory my/pending-move-bm) my/pending-move-bm))) ((eq my/speed-dial-mode 'untag) \"\n\n  >>> [UNTAG MODE] PRESS THE KEY OF THE SLOT YOU WANT TO UNTAG <<<\") (t \"\"))
 
   ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)    ^MANAGEMENT^
   ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
@@ -764,30 +754,22 @@ You can then populate it by tagging the current file ('T') or moving items ('M')
   _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
                                                       _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
   "
-  ;; Left Hand
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
   ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
   ("z" (my/speed-dial-jump "global" 5)) ("x" (my/speed-dial-jump "global" 6))
   ("c" (my/speed-dial-jump "global" 7)) ("v" (my/speed-dial-jump "global" 8))
   
-  ;; Right Hand
   ("j" (my/speed-dial-jump my/current-speed-dial-tag 1)) ("k" (my/speed-dial-jump my/current-speed-dial-tag 2))
   ("l" (my/speed-dial-jump my/current-speed-dial-tag 3)) (";" (my/speed-dial-jump my/current-speed-dial-tag 4))
   ("m" (my/speed-dial-jump my/current-speed-dial-tag 5)) ("," (my/speed-dial-jump my/current-speed-dial-tag 6))
   ("." (my/speed-dial-jump my/current-speed-dial-tag 7)) ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
 
-  ;; Management (Shift / Capital letters)
-  ("T" my/hydra-quick-tag-current)
-  ("U" my/hydra-start-untag)
-  ("M" my/hydra-start-move)
-  ("C" my/hydra-create-tag)
-  ("W" my/hydra-wipe-tag)    
+  ("T" my/hydra-quick-tag-current) ("U" my/hydra-start-untag) ("M" my/hydra-start-move)
+  ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag)    
+  ("p" my/set-workspace-and-resume) ("t" my/set-tag-and-resume)
+  ("q" my/hydra-quit) ("<escape>" my/hydra-quit))
 
-  ;; Controls
-  ("p" my/set-workspace-and-resume)
-  ("t" my/set-tag-and-resume)
-  ("q" my/hydra-quit)
-  ("<escape>" my/hydra-quit))
-
-;; Bind ONLY the Hydra to SPC a
+;; Bind standard 'SPC b m' to our new absolute path command
+(define-key evil-normal-state-map (kbd "SPC b m") 'my/bookmark-set-absolute)
+;; Bind the Hydra
 (define-key evil-normal-state-map (kbd "SPC a") 'hydra-speed-dial/body)
