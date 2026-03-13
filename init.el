@@ -443,11 +443,9 @@
   "The currently active dynamic tag (Right Hand).")
 
 (defun my/bookmark-belongs-to-workspace-p (bm root)
-  "Check if bookmark BM belongs to the active ROOT."
-  (let ((file (bookmark-get-filename bm))
-        (proj-tag (concat "proj:" root)))
-    (or (member proj-tag (bookmark-prop-get bm 'tags))
-        (and file (string-prefix-p root (expand-file-name file))))))
+  "Check if bookmark BM belongs strictly to the active ROOT workspace."
+  (let ((proj-tag (concat "proj:" root)))
+    (member proj-tag (bookmark-prop-get bm 'tags))))
 
 (defun my/get-workspace-bookmarks ()
   "Return a list of bookmark names in the active workspace."
@@ -464,8 +462,12 @@
   (bookmark-maybe-load-default-file)
   (let* ((root (my/get-workspace))
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
-         (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
-         (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags)))
+         (all-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
+         (prefix (format "wt|%s|" root))
+         (clean-tags (delq nil (mapcar (lambda (t-name)
+                                         (when (string-prefix-p prefix t-name)
+                                           (substring t-name (length prefix))))
+                                       all-tags))))
     (if (not clean-tags)
         (message "No tags found! Press 'N' to tag a file first.")
       (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags)))))
@@ -482,8 +484,9 @@
     
     (let* ((root (my/get-workspace))
            (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
-           (tagged-bms (cl-remove-if-not (lambda (bm) (member tag (bookmark-prop-get bm 'tags))) project-bms))
-           (slotted-bms (my/get-bookmarks-in-slots (mapcar #'car tagged-bms) tag))
+           (wt-tag (format "wt|%s|%s" root tag))
+           (tagged-bms (cl-remove-if-not (lambda (bm) (member wt-tag (bookmark-prop-get bm 'tags))) project-bms))
+           (slotted-bms (my/get-bookmarks-in-slots (mapcar #'car tagged-bms) tag root))
            (target (nth (1- num) slotted-bms)))
       
       (cond
@@ -502,17 +505,17 @@
        ((eq my/speed-dial-mode 'tag)
         (let* ((bm-name (if buffer-file-name (expand-file-name buffer-file-name) (buffer-name)))
                (proj-tag (concat "proj:" root))
-               (prop (intern (concat "slot-" tag))))
+               (prop (intern (format "slot|%s|%s" root tag))))
           
           (unless (assoc bm-name bookmark-alist) (bookmark-set bm-name))
           
-          ;; FIX: Only kick out files within THIS WORKSPACE (project-bms), not globally!
+          ;; Kick out files ONLY within THIS WORKSPACE + TAG combination!
           (dolist (other-bm (mapcar #'car project-bms))
             (when (and (not (string= other-bm bm-name)) (eq (bookmark-prop-get other-bm prop) num))
               (bookmark-prop-set other-bm prop nil)))
               
           (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
-            (unless (member tag existing-tags) (push tag existing-tags))
+            (unless (member wt-tag existing-tags) (push wt-tag existing-tags))
             (unless (member proj-tag existing-tags) (push proj-tag existing-tags))
             (bookmark-prop-set bm-name 'tags existing-tags))
             
@@ -536,10 +539,11 @@
         (let* ((bm-name my/pending-move-bm)
                (old-tag my/pending-move-board)
                (new-tag tag)
-               (new-prop (intern (concat "slot-" new-tag)))
-               (old-prop (intern (concat "slot-" old-tag))))
+               (new-prop (intern (format "slot|%s|%s" root new-tag)))
+               (old-prop (intern (format "slot|%s|%s" root old-tag)))
+               (wt-new-tag (format "wt|%s|%s" root new-tag))
+               (wt-old-tag (format "wt|%s|%s" root old-tag)))
 
-          ;; FIX: Only kick out files within THIS WORKSPACE (project-bms), not globally!
           (dolist (other-bm (mapcar #'car project-bms))
             (when (and (not (string= other-bm bm-name)) (eq (bookmark-prop-get other-bm new-prop) num))
               (bookmark-prop-set other-bm new-prop nil)))
@@ -548,8 +552,8 @@
 
           (when (not (string= old-tag new-tag))
             (let ((tags (bookmark-prop-get bm-name 'tags)))
-              (setq tags (remove old-tag tags))
-              (unless (member new-tag tags) (push new-tag tags))
+              (setq tags (remove wt-old-tag tags))
+              (unless (member wt-new-tag tags) (push wt-new-tag tags))
               (bookmark-prop-set bm-name 'tags tags)))
 
           (bookmark-prop-set bm-name new-prop num)
@@ -561,27 +565,34 @@
           (message "Moved '%s' to slot %d on [%s]!" (file-name-nondirectory bm-name) num new-tag))
         (hydra-speed-dial/body))
        
-       ;; --- UNTAG MODE (With Auto-Delete) ---
+       ;; --- UNTAG MODE (With Global Garbage Collection) ---
        ((eq my/speed-dial-mode 'untag)
         (if (not target)
             (message "That slot is already empty!")
           (let* ((tags (bookmark-prop-get target 'tags))
-                 (prop (intern (concat "slot-" tag))))
+                 (prop (intern (format "slot|%s|%s" root tag)))
+                 (prefix (format "wt|%s|" root)))
             
-            ;; 1. Remove the target tag
-            (setq tags (remove tag tags))
-            (bookmark-prop-set target 'tags tags)
+            ;; 1. Remove the specific tag from this workspace
+            (setq tags (remove wt-tag tags))
             (bookmark-prop-set target prop nil)
             
-            ;; 2. Auto-delete if it's an orphan (no user tags remaining)
-            (let ((remaining-user-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
-              (if (not remaining-user-tags)
+            ;; 2. Auto-delete logic: check if ANY workspace tags remain for THIS root
+            (let ((remaining-wt-for-root (cl-remove-if-not (lambda (t-name) (string-prefix-p prefix t-name)) tags)))
+              (unless remaining-wt-for-root
+                ;; No tags left in this workspace, unproject it
+                (setq tags (remove (concat "proj:" root) tags))))
+                
+            (bookmark-prop-set target 'tags tags)
+            
+            ;; 3. Check if it has ANY project tags left globally
+            (let ((remaining-proj (cl-remove-if-not (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
+              (if (not remaining-proj)
                   (progn
                     (bookmark-delete target)
-                    (message "Untagged '%s' and DELETED bookmark (no tags remaining)." (file-name-nondirectory target)))
-                ;; Else, just save
+                    (message "Untagged '%s' and DELETED bookmark (not in any workspace)." (file-name-nondirectory target)))
                 (bookmark-save)
-                (message "Untagged '%s' from [%s]" (file-name-nondirectory target) tag)))))
+                (message "Untagged '%s' from[%s]" (file-name-nondirectory target) tag)))))
         
         (setq my/speed-dial-mode 'normal)
         (hydra-speed-dial/body))))))
@@ -591,8 +602,8 @@
 (defvar my/pending-move-board nil "Board where the bookmark originated.")
 
 ;; --- HYDRA HELPER & MANAGEMENT FUNCTIONS ---
-(defun my/get-bookmarks-in-slots (bm-names tag)
-  (let* ((prop (intern (concat "slot-" tag)))
+(defun my/get-bookmarks-in-slots (bm-names tag root)
+  (let* ((prop (intern (format "slot|%s|%s" root tag)))
          (slots (make-vector 8 nil))
          (unassigned nil))
     (dolist (bm bm-names)
@@ -624,14 +635,12 @@
     (when my/current-workspace-root
       (let* ((root my/current-workspace-root)
              (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
-             (bms (if (eq side 'left)
-                      (cl-remove-if-not (lambda (bm) (member "global" (bookmark-prop-get bm 'tags))) project-bms)
-                    (if my/current-speed-dial-tag
-                        (cl-remove-if-not (lambda (bm) (member my/current-speed-dial-tag (bookmark-prop-get bm 'tags))) project-bms)
-                      nil)))
              (active-tag (if (eq side 'left) "global" my/current-speed-dial-tag))
-             (slotted-bms (my/get-bookmarks-in-slots (mapcar #'car bms) active-tag))
-             (target (nth (1- num) slotted-bms)))
+             (bms (when active-tag
+                    (let ((wt-tag (format "wt|%s|%s" root active-tag)))
+                      (cl-remove-if-not (lambda (bm) (member wt-tag (bookmark-prop-get bm 'tags))) project-bms))))
+             (slotted-bms (when active-tag (my/get-bookmarks-in-slots (mapcar #'car bms) active-tag root)))
+             (target (when slotted-bms (nth (1- num) slotted-bms))))
         (when target
           (setq val (if (file-name-absolute-p target) (file-name-nondirectory target) target)))))
     (truncate-string-to-width val 20 0 ?\s "…")))
@@ -646,40 +655,88 @@
   (hydra-speed-dial/body))
 
 (defun my/hydra-wipe-tag ()
-  "Remove a specific tag from ALL bookmarks in the current workspace, deleting orphans."
+  "Remove a specific tag from ALL bookmarks in the current workspace, checking for orphans."
   (interactive)
   (let* ((root (my/get-workspace))
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
-         (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
-         (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags)))
+         (prefix (format "wt|%s|" root))
+         (all-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
+         (clean-tags (delq nil (mapcar (lambda (t-name)
+                                         (when (string-prefix-p prefix t-name)
+                                           (substring t-name (length prefix))))
+                                       all-tags))))
     (if (not clean-tags)
         (message "No tags exist in this workspace!")
       (let ((tag-to-nuke (completing-read "Wipe tag completely: " clean-tags nil t))
             (deleted-count 0)
             (modified nil))
-        (dolist (bm project-bms)
-          (let* ((bm-name (car bm)) 
-                 (tags (bookmark-prop-get bm-name 'tags)))
-            ;; If this bookmark has the tag we are wiping...
-            (when (member tag-to-nuke tags)
-              (setq modified t)
-              (let ((new-tags (remove tag-to-nuke tags)))
-                (bookmark-prop-set bm-name 'tags new-tags)
-                
-                ;; Check if wiping this tag turned it into an orphan
-                (let ((remaining-user-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) new-tags)))
-                  (when (not remaining-user-tags)
-                    (bookmark-delete bm-name)
-                    (setq deleted-count (1+ deleted-count))))))))
+        (let ((wt-tag (format "wt|%s|%s" root tag-to-nuke))
+              (prop (intern (format "slot|%s|%s" root tag-to-nuke))))
+          (dolist (bm project-bms)
+            (let* ((bm-name (car bm)) 
+                   (tags (bookmark-prop-get bm-name 'tags)))
+              (when (member wt-tag tags)
+                (setq modified t)
+                (let ((new-tags (remove wt-tag tags)))
+                  (bookmark-prop-set bm-name prop nil)
+                  
+                  ;; If no tags remain for this workspace, remove it from the workspace
+                  (let ((remaining-wt-for-root (cl-remove-if-not (lambda (t-name) (string-prefix-p prefix t-name)) new-tags)))
+                    (unless remaining-wt-for-root
+                      (setq new-tags (remove (concat "proj:" root) new-tags))))
+                  
+                  (bookmark-prop-set bm-name 'tags new-tags)
+                  
+                  ;; If it no longer belongs to ANY workspace globally, delete it
+                  (let ((remaining-proj (cl-remove-if-not (lambda (t-name) (string-prefix-p "proj:" t-name)) new-tags)))
+                    (when (not remaining-proj)
+                      (bookmark-delete bm-name)
+                      (setq deleted-count (1+ deleted-count)))))))))
         
-        ;; Save changes to the disk
         (when modified (bookmark-save))
-        
-        ;; If the tag we wiped was locked to the right hand, unlock it
         (when (string= my/current-speed-dial-tag tag-to-nuke) 
           (setq my/current-speed-dial-tag nil))
+        (message "Wiped tag '%s' (Deleted %d orphaned globally)." tag-to-nuke deleted-count))))
+  (hydra-speed-dial/body))
+
+;; ==========================================
+;; NEW FUNCTION: NUKE WORKSPACE (SAFE)
+;; ==========================================
+(defun my/hydra-wipe-workspace ()
+  "Remove the workspace. If bookmarks are shared, untag them. If strictly local, delete them."
+  (interactive)
+  (bookmark-maybe-load-default-file)
+  (let* ((root (my/get-workspace))
+         (project-bms (cl-remove-if-not 
+                       (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) 
+                       bookmark-alist)))
+    
+    (if (not project-bms)
+        (message "Workspace is already empty! No bookmarks to remove.")
+      (when (y-or-n-p (format "DANGER: Remove workspace '%s' (%d files)? " 
+                              (file-name-nondirectory (directory-file-name root))
+                              (length project-bms)))
         
-        (message "Wiped tag '%s' (Deleted %d orphaned bookmarks)." tag-to-nuke deleted-count))))
+        (dolist (bm project-bms)
+          (let* ((bm-name (car bm))
+                 (tags (bookmark-prop-get bm-name 'tags))
+                 (prefix (format "wt|%s|" root))
+                 ;; Filter out tags belonging to THIS workspace
+                 (new-tags (cl-remove-if (lambda (t-name) (string-prefix-p prefix t-name)) tags)))
+            
+            ;; Un-project it from this workspace
+            (setq new-tags (remove (concat "proj:" root) new-tags))
+            (bookmark-prop-set bm-name 'tags new-tags)
+            
+            ;; Check if it has any OTHER project tags. If no, nuke it safely.
+            (let ((remaining-proj (cl-remove-if-not (lambda (t-name) (string-prefix-p "proj:" t-name)) new-tags)))
+              (when (not remaining-proj)
+                (bookmark-delete bm-name)))))
+        
+        (bookmark-save)
+        (setq my/current-workspace-root nil)
+        (setq my/current-speed-dial-tag nil)
+        (message "Workspace clean successfully!"))))
   (hydra-speed-dial/body))
 
 (defun my/set-workspace-and-resume () (interactive) (call-interactively 'my/set-workspace) (hydra-speed-dial/body))
@@ -698,7 +755,7 @@
   _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _M_: Toggle Move Mode       
   _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _C_: Create New Tag
   _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _W_: Wipe Tag Completely
-  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  _X_: Nuke Workspace 
   _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^CONTROLS^
   _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
                                                       _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
@@ -714,7 +771,7 @@
   ("." (my/speed-dial-jump my/current-speed-dial-tag 7)) ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
 
   ("T" my/hydra-start-tag) ("U" my/hydra-start-untag) ("M" my/hydra-start-move)
-  ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag)    
+  ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag) ("X" my/hydra-wipe-workspace)    
   ("p" my/set-workspace-and-resume) ("t" my/set-tag-and-resume)
   ("q" my/hydra-quit) ("<escape>" my/hydra-quit))
 
