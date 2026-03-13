@@ -676,42 +676,6 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
           (setq val target))))
     (truncate-string-to-width val 20 0 ?\s "…")))
 
-(defun my/hydra-assign-tag ()
-  (interactive)
-  (let ((bms (my/get-workspace-bookmarks)))
-    (if (not bms)
-        (message "No bookmarks! Press 'N' to tag current file first.")
-      (let* ((bm-name (completing-read "Select bookmark: " bms nil t))
-             (root (my/get-workspace))
-             (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
-             (project-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
-             (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags))
-             (new-tag (completing-read (format "Add tag to '%s' (e.g. global, api): " bm-name) clean-tags)))
-        (let ((tags (bookmark-prop-get bm-name 'tags)))
-          (unless (member new-tag tags)
-            (push new-tag tags)
-            (bookmark-prop-set bm-name 'tags tags)
-            (bookmark-save)
-            (message "Added tag '%s' to '%s'" new-tag bm-name))))))
-  (hydra-speed-dial/body))
-
-(defun my/hydra-remove-tag ()
-  (interactive)
-  (let ((bms (my/get-workspace-bookmarks)))
-    (if (not bms)
-        (message "No bookmarks in this workspace!")
-      (let* ((bm-name (completing-read "Select bookmark: " bms nil t))
-             (tags (bookmark-prop-get bm-name 'tags))
-             (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
-        (if (not clean-tags)
-            (message "No removable tags on '%s'!" bm-name)
-          (let ((tag-to-remove (completing-read "Remove tag: " clean-tags nil t)))
-            (setq tags (remove tag-to-remove tags))
-            (bookmark-prop-set bm-name 'tags tags)
-            (bookmark-save)
-            (message "Removed tag '%s' from '%s'" tag-to-remove bm-name))))))
-  (hydra-speed-dial/body))
-
 (defun my/hydra-wipe-tag ()
   "Remove a specific tag from ALL bookmarks in the current workspace."
   (interactive)
@@ -751,13 +715,12 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
   ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
   _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _T_: Tag Current File (Active)
   _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _M_: Toggle Move Mode       
-  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _A_: Add Tag to BM
-  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _R_: Remove Tag from BM
-  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _W_: Wipe Tag Completely
-  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  
-  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^CONTROLS^
-  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
-                                                      _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
+  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _W_: Wipe Tag Completely
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  
+  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  ^CONTROLS^
+  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^^^^^^^^^^
+  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
   "
   ;; Left Hand
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
@@ -774,8 +737,6 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
   ;; Management (Shift / Capital letters)
   ("T" my/hydra-quick-tag-current)
   ("M" my/hydra-start-move)
-  ("A" my/hydra-assign-tag)
-  ("R" my/hydra-remove-tag)
   ("W" my/hydra-wipe-tag)    
 
   ;; Controls
