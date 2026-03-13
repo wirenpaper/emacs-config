@@ -578,6 +578,7 @@
 (defvar my/pending-move-board nil "Board where the bookmark originated.")
 
 ;; --- HYDRA HELPER & MANAGEMENT FUNCTIONS ---
+
 (defun my/get-bookmarks-in-slots (bm-names tag)
   "Distribute BM-NAMES into an 8-slot list based on their 'slot-TAG' property.
 Unassigned bookmarks automatically fill any remaining empty gaps."
@@ -676,6 +677,17 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
           (setq val target))))
     (truncate-string-to-width val 20 0 ?\s "…")))
 
+(defun my/hydra-create-tag ()
+  "Prompt for a new tag name and lock it to the right hand.
+You can then populate it by tagging the current file ('T') or moving items ('M')."
+  (interactive)
+  (let ((new-tag (read-string "Create new tag: ")))
+    (if (string= "" new-tag)
+        (message "Cancelled: Tag name cannot be empty.")
+      (setq my/current-speed-dial-tag new-tag)
+      (message "Created and locked new tag: [%s]" new-tag)))
+  (hydra-speed-dial/body))
+
 (defun my/hydra-wipe-tag ()
   "Remove a specific tag from ALL bookmarks in the current workspace."
   (interactive)
@@ -709,14 +721,14 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
 (defhydra hydra-speed-dial (:color blue :hint nil)
   "
   ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
-  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>> [MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING: [%s] ... PRESS TARGET KEY TO DROP! <<<\" my/pending-move-bm)) (t \"\"))
+  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>>[MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" my/pending-move-bm)) (t \"\"))
 
   ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)    ^MANAGEMENT^
   ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
   _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _T_: Tag Current File (Active)
   _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _M_: Toggle Move Mode       
-  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _W_: Wipe Tag Completely
-  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  
+  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _C_: Create New Tag
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _W_: Wipe Tag Completely
   _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  
   _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  ^CONTROLS^
   _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^^^^^^^^^^
@@ -737,6 +749,7 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
   ;; Management (Shift / Capital letters)
   ("T" my/hydra-quick-tag-current)
   ("M" my/hydra-start-move)
+  ("C" my/hydra-create-tag)
   ("W" my/hydra-wipe-tag)    
 
   ;; Controls
