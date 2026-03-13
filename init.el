@@ -502,7 +502,7 @@
       (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags)))))
 
 (defun my/speed-dial-jump (tag num)
-  "Jump to the NUM-th bookmark of TAG, OR handle Keyboard Drag-and-Drop."
+  "Jump to the NUM-th bookmark of TAG, handle Move, OR handle Untag."
   (bookmark-maybe-load-default-file)
   
   ;; Block actions on the right side if no tag is locked
@@ -571,9 +571,27 @@
           (message "Moved '%s' to slot %d on [%s]!" bm-name num new-tag))
         
         ;; Keep Hydra open to see the new layout!
+        (hydra-speed-dial/body))
+       
+       ;; --- UNTAG MODE: User pressed a key to untag the file ---
+       ((eq my/speed-dial-mode 'untag)
+        (if (not target)
+            (message "That slot is already empty!")
+          (let* ((tags (bookmark-prop-get target 'tags))
+                 (prop (intern (concat "slot-" tag))))
+            ;; Remove the specific tag (left=global, right=dynamic)
+            (setq tags (remove tag tags))
+            (bookmark-prop-set target 'tags tags)
+            ;; Also clear its specific slot position for this tag
+            (bookmark-prop-set target prop nil)
+            (bookmark-save)
+            (message "Untagged '%s' from [%s]" target tag)))
+        
+        ;; Reset mode back to normal and keep Hydra open
+        (setq my/speed-dial-mode 'normal)
         (hydra-speed-dial/body))))))
 
-(defvar my/speed-dial-mode 'normal "Can be 'normal, 'pick, or 'drop")
+(defvar my/speed-dial-mode 'normal "Can be 'normal, 'pick, 'drop, or 'untag")
 (defvar my/pending-move-bm nil "Bookmark currently being moved.")
 (defvar my/pending-move-board nil "Board where the bookmark originated.")
 
@@ -609,6 +627,17 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
   (interactive)
   (if (eq my/speed-dial-mode 'normal)
       (setq my/speed-dial-mode 'pick)
+    (progn ;; Cancel if pressed again
+      (setq my/speed-dial-mode 'normal)
+      (setq my/pending-move-bm nil)
+      (setq my/pending-move-board nil)))
+  (hydra-speed-dial/body))
+
+(defun my/hydra-start-untag ()
+  "Toggle the Speed Dial into Untag mode."
+  (interactive)
+  (if (eq my/speed-dial-mode 'normal)
+      (setq my/speed-dial-mode 'untag)
     (progn ;; Cancel if pressed again
       (setq my/speed-dial-mode 'normal)
       (setq my/pending-move-bm nil)
@@ -721,18 +750,19 @@ You can then populate it by tagging the current file ('T') or moving items ('M')
 (defhydra hydra-speed-dial (:color blue :hint nil)
   "
   ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
-  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>>[MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" my/pending-move-bm)) (t \"\"))
+  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>> [MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" my/pending-move-bm)) ((eq my/speed-dial-mode 'untag) \"\n\n  >>> [UNTAG MODE] PRESS THE KEY OF THE SLOT YOU WANT TO UNTAG <<<\") (t \"\"))
 
   ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)    ^MANAGEMENT^
   ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
   _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _T_: Tag Current File (Active)
-  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _M_: Toggle Move Mode       
-  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _C_: Create New Tag
-  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _W_: Wipe Tag Completely
-  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  
-  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  ^CONTROLS^
-  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^^^^^^^^^^
-  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
+  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _U_: Untag a Slot
+  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _M_: Toggle Move Mode       
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _C_: Create New Tag
+  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _W_: Wipe Tag Completely
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  
+  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^CONTROLS^
+  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
+                                                      _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
   "
   ;; Left Hand
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
@@ -748,6 +778,7 @@ You can then populate it by tagging the current file ('T') or moving items ('M')
 
   ;; Management (Shift / Capital letters)
   ("T" my/hydra-quick-tag-current)
+  ("U" my/hydra-start-untag)
   ("M" my/hydra-start-move)
   ("C" my/hydra-create-tag)
   ("W" my/hydra-wipe-tag)    
