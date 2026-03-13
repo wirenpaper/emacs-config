@@ -504,7 +504,7 @@
       (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags)))))
 
 (defun my/speed-dial-jump (tag num)
-  "Jump to the NUM-th bookmark of TAG, handle Move, OR handle Untag."
+  "Jump to the NUM-th bookmark of TAG, handle Move, Tag, OR handle Untag."
   (bookmark-maybe-load-default-file)
   
   ;; Block actions on the right side if no tag is locked
@@ -535,6 +535,39 @@
                     (switch-to-buffer target)
                   (bookmark-jump target))))
           (message "Empty slot")))
+
+       ;; --- TAG MODE: User pressed a key to tag the current file to this slot ---
+       ((eq my/speed-dial-mode 'tag)
+        (let* ((bm-name (if buffer-file-name (expand-file-name buffer-file-name) (buffer-name)))
+               (proj-tag (concat "proj:" root))
+               (prop (intern (concat "slot-" tag))))
+          
+          ;; 1. Ensure bookmark exists
+          (unless (assoc bm-name bookmark-alist)
+            (bookmark-set bm-name))
+          
+          ;; 2. Kick out whatever is currently occupying the target slot
+          (dolist (other-bm (mapcar #'car bookmark-alist))
+            (when (and (not (string= other-bm bm-name))
+                       (eq (bookmark-prop-get other-bm prop) num))
+              (bookmark-prop-set other-bm prop nil)))
+              
+          ;; 3. Add tags
+          (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
+            (unless (member tag existing-tags)
+              (push tag existing-tags))
+            (unless (member proj-tag existing-tags)
+              (push proj-tag existing-tags))
+            (bookmark-prop-set bm-name 'tags existing-tags))
+            
+          ;; 4. Save new location
+          (bookmark-prop-set bm-name prop num)
+          (bookmark-save)
+          
+          ;; 5. Reset everything
+          (setq my/speed-dial-mode 'normal)
+          (message "Tagged '%s' to slot %d on [%s]!" (file-name-nondirectory bm-name) num tag)
+          (hydra-speed-dial/body)))
 
        ;; --- PICK MODE: User pressed a key to pick up a file ---
        ((eq my/speed-dial-mode 'pick)
@@ -598,7 +631,7 @@
         (setq my/speed-dial-mode 'normal)
         (hydra-speed-dial/body))))))
 
-(defvar my/speed-dial-mode 'normal "Can be 'normal, 'pick, 'drop, or 'untag")
+(defvar my/speed-dial-mode 'normal "Can be 'normal, 'pick, 'drop, 'tag, or 'untag")
 (defvar my/pending-move-bm nil "Bookmark currently being moved.")
 (defvar my/pending-move-board nil "Board where the bookmark originated.")
 
@@ -619,6 +652,16 @@
       (when (and (null (aref slots i)) unassigned)
         (aset slots i (pop unassigned))))
     (append slots nil)))
+
+(defun my/hydra-start-tag ()
+  "Toggle the Speed Dial into Tag mode to assign current file to a slot."
+  (interactive)
+  (if (eq my/speed-dial-mode 'normal)
+      (setq my/speed-dial-mode 'tag)
+    (progn (setq my/speed-dial-mode 'normal)
+           (setq my/pending-move-bm nil)
+           (setq my/pending-move-board nil)))
+  (hydra-speed-dial/body))
 
 (defun my/hydra-start-move ()
   "Toggle the Speed Dial into Move (Pick & Drop) mode."
@@ -657,37 +700,6 @@
                                nil nil default-name)))
     (bookmark-set bm-name)))
 
-(defun my/hydra-quick-tag-current ()
-  "Prompt to tag the currently opened file using its ABSOLUTE path."
-  (interactive)
-  (bookmark-maybe-load-default-file)
-  (let* ((root (my/get-workspace))
-         (proj-tag (concat "proj:" root))
-         ;; CHANGED: Use expand-file-name to grab the full absolute path
-         (bm-name (if buffer-file-name 
-                      (expand-file-name buffer-file-name) 
-                    (buffer-name)))
-         (choices (if my/current-speed-dial-tag
-                      (list "global" my/current-speed-dial-tag)
-                    (list "global")))
-         (selected-tag (completing-read "Tag current file to: " choices nil t)))
-    
-    (unless (assoc bm-name bookmark-alist)
-      (bookmark-set bm-name))
-    
-    (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
-      (unless (member selected-tag existing-tags)
-        (push selected-tag existing-tags))
-      (unless (member proj-tag existing-tags)
-        (push proj-tag existing-tags))
-      
-      (bookmark-prop-set bm-name 'tags existing-tags)
-      (bookmark-save)
-      ;; Print only the filename to the echo area to keep it tidy
-      (message "Quick-tagged '%s' as [%s]" (file-name-nondirectory bm-name) selected-tag)))
-  
-  (hydra-speed-dial/body))
-
 (defun my/sd-name (side num)
   "Helper for Hydra: fetch, pad, and truncate the bookmark name for the HUD."
   (bookmark-maybe-load-default-file)
@@ -704,7 +716,6 @@
              (slotted-bms (my/get-bookmarks-in-slots (mapcar #'car bms) active-tag))
              (target (nth (1- num) slotted-bms)))
         (when target
-          ;; CHANGED: If the bookmark name is an absolute path, only display the file name in the HUD!
           (setq val (if (file-name-absolute-p target)
                         (file-name-nondirectory target)
                       target)))))
@@ -749,7 +760,7 @@
 (defhydra hydra-speed-dial (:color blue :hint nil)
   "
   ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
-  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>> [MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" (if (and my/pending-move-bm (file-name-absolute-p my/pending-move-bm)) (file-name-nondirectory my/pending-move-bm) my/pending-move-bm))) ((eq my/speed-dial-mode 'untag) \"\n\n  >>> [UNTAG MODE] PRESS THE KEY OF THE SLOT YOU WANT TO UNTAG <<<\") (t \"\"))
+  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>> [MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" (if (and my/pending-move-bm (file-name-absolute-p my/pending-move-bm)) (file-name-nondirectory my/pending-move-bm) my/pending-move-bm))) ((eq my/speed-dial-mode 'untag) \"\n\n  >>> [UNTAG MODE] PRESS THE KEY OF THE SLOT YOU WANT TO UNTAG <<<\") ((eq my/speed-dial-mode 'tag) \"\n\n  >>> [TAG MODE] PRESS A SLOT KEY TO TAG AND ASSIGN THE CURRENT FILE <<<\") (t \"\"))
 
   ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)    ^MANAGEMENT^
   ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
@@ -773,7 +784,7 @@
   ("m" (my/speed-dial-jump my/current-speed-dial-tag 5)) ("," (my/speed-dial-jump my/current-speed-dial-tag 6))
   ("." (my/speed-dial-jump my/current-speed-dial-tag 7)) ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
 
-  ("T" my/hydra-quick-tag-current) ("U" my/hydra-start-untag) ("M" my/hydra-start-move)
+  ("T" my/hydra-start-tag) ("U" my/hydra-start-untag) ("M" my/hydra-start-move)
   ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag)    
   ("p" my/set-workspace-and-resume) ("t" my/set-tag-and-resume)
   ("q" my/hydra-quit) ("<escape>" my/hydra-quit))
