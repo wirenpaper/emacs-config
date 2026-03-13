@@ -676,11 +676,6 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
           (setq val target))))
     (truncate-string-to-width val 20 0 ?\s "…")))
 
-(defun my/hydra-tag-current-file ()
-  (interactive)
-  (call-interactively 'my/bookmark-tag-current-file)
-  (hydra-speed-dial/body))
-
 (defun my/hydra-assign-tag ()
   (interactive)
   (let ((bms (my/get-workspace-bookmarks)))
@@ -715,17 +710,6 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
             (bookmark-prop-set bm-name 'tags tags)
             (bookmark-save)
             (message "Removed tag '%s' from '%s'" tag-to-remove bm-name))))))
-  (hydra-speed-dial/body))
-
-(defun my/hydra-delete-bookmark ()
-  (interactive)
-  (let ((bms (my/get-workspace-bookmarks)))
-    (if (not bms)
-        (message "No bookmarks to delete in this workspace!")
-      (let ((bm-to-delete (completing-read "Delete bookmark: " bms nil t)))
-        (bookmark-delete bm-to-delete)
-        (bookmark-save)
-        (message "Deleted: %s" bm-to-delete))))
   (hydra-speed-dial/body))
 
 (defun my/hydra-wipe-tag ()
@@ -765,14 +749,14 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
 
   ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)    ^MANAGEMENT^
   ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
-  _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _N_: Tag Current File (New Tag)
-  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _T_: Tag Current File (Active Tag)
-  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _M_: Toggle Move Mode       
-  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _A_: Add Tag to BM
-  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _R_: Remove Tag from BM
-  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  _W_: Wipe Tag Completely
-  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  _D_: Delete Bookmark
-  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^CONTROLS^
+  _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _T_: Tag Current File (Active)
+  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _M_: Toggle Move Mode       
+  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _A_: Add Tag to BM
+  _f_: %s(my/sd-name 'left 4) _;_: %s(my/sd-name 'right 4)  _R_: Remove Tag from BM
+  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _W_: Wipe Tag Completely
+  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  
+  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^CONTROLS^
+  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
                                                       _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
   "
   ;; Left Hand
@@ -788,19 +772,17 @@ Unassigned bookmarks automatically fill any remaining empty gaps."
   ("." (my/speed-dial-jump my/current-speed-dial-tag 7)) ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
 
   ;; Management (Shift / Capital letters)
-  ("N" my/hydra-tag-current-file)
   ("T" my/hydra-quick-tag-current)
-  ("M" my/hydra-start-move)         ;; <--- CHANGED HERE
+  ("M" my/hydra-start-move)
   ("A" my/hydra-assign-tag)
   ("R" my/hydra-remove-tag)
   ("W" my/hydra-wipe-tag)    
-  ("D" my/hydra-delete-bookmark)
 
   ;; Controls
   ("p" my/set-workspace-and-resume)
   ("t" my/set-tag-and-resume)
-  ("q" my/hydra-quit)               ;; <--- CHANGED HERE
-  ("<escape>" my/hydra-quit))       ;; <--- CHANGED HERE
+  ("q" my/hydra-quit)
+  ("<escape>" my/hydra-quit))
 
 ;; Bind ONLY the Hydra to SPC a
 (define-key evil-normal-state-map (kbd "SPC a") 'hydra-speed-dial/body)
