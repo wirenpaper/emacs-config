@@ -506,7 +506,8 @@
           
           (unless (assoc bm-name bookmark-alist) (bookmark-set bm-name))
           
-          (dolist (other-bm (mapcar #'car bookmark-alist))
+          ;; FIX: Only kick out files within THIS WORKSPACE (project-bms), not globally!
+          (dolist (other-bm (mapcar #'car project-bms))
             (when (and (not (string= other-bm bm-name)) (eq (bookmark-prop-get other-bm prop) num))
               (bookmark-prop-set other-bm prop nil)))
               
@@ -538,7 +539,8 @@
                (new-prop (intern (concat "slot-" new-tag)))
                (old-prop (intern (concat "slot-" old-tag))))
 
-          (dolist (other-bm (mapcar #'car bookmark-alist))
+          ;; FIX: Only kick out files within THIS WORKSPACE (project-bms), not globally!
+          (dolist (other-bm (mapcar #'car project-bms))
             (when (and (not (string= other-bm bm-name)) (eq (bookmark-prop-get other-bm new-prop) num))
               (bookmark-prop-set other-bm new-prop nil)))
 
@@ -559,7 +561,7 @@
           (message "Moved '%s' to slot %d on [%s]!" (file-name-nondirectory bm-name) num new-tag))
         (hydra-speed-dial/body))
        
-       ;; --- UNTAG MODE ---
+       ;; --- UNTAG MODE (With Auto-Delete) ---
        ((eq my/speed-dial-mode 'untag)
         (if (not target)
             (message "That slot is already empty!")
@@ -571,15 +573,15 @@
             (bookmark-prop-set target 'tags tags)
             (bookmark-prop-set target prop nil)
             
-            ;; 2. Check if the bookmark is an orphan now (no non-project tags remaining)
+            ;; 2. Auto-delete if it's an orphan (no user tags remaining)
             (let ((remaining-user-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
               (if (not remaining-user-tags)
                   (progn
                     (bookmark-delete target)
                     (message "Untagged '%s' and DELETED bookmark (no tags remaining)." (file-name-nondirectory target)))
-                ;; Else, just save the modified tags
+                ;; Else, just save
                 (bookmark-save)
-                (message "Untagged '%s' from[%s]" (file-name-nondirectory target) tag)))))
+                (message "Untagged '%s' from [%s]" (file-name-nondirectory target) tag)))))
         
         (setq my/speed-dial-mode 'normal)
         (hydra-speed-dial/body))))))
