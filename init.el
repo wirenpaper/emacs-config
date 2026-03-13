@@ -519,10 +519,19 @@
            (target (nth (1- num) slotted-bms)))
       
       (cond
-       ;; --- NORMAL MODE: Just jump to the file ---
+       ;; --- NORMAL MODE: Just open the file ---
        ((eq my/speed-dial-mode 'normal)
         (if target
-            (bookmark-jump target)
+            (let ((file (bookmark-get-filename target)))
+              (if file
+                  ;; If it's a real file, just open it normally! 
+                  ;; This ignores the bookmark's saved position and lets save-place-mode work.
+                  (find-file file)
+                ;; Fallback: If it's a non-file buffer (like *scratch*), switch to it.
+                ;; Ultimate Fallback: Just use bookmark-jump if everything else fails.
+                (if (get-buffer target)
+                    (switch-to-buffer target)
+                  (bookmark-jump target))))
           (message "Empty slot")))
 
        ;; --- PICK MODE: User pressed a key to pick up a file ---
@@ -570,7 +579,6 @@
 
           (message "Moved '%s' to slot %d on [%s]!" (file-name-nondirectory bm-name) num new-tag))
         
-        ;; Keep Hydra open to see the new layout!
         (hydra-speed-dial/body))
        
        ;; --- UNTAG MODE: User pressed a key to untag the file ---
@@ -585,7 +593,6 @@
             (bookmark-save)
             (message "Untagged '%s' from [%s]" (file-name-nondirectory target) tag)))
         
-        ;; Reset mode back to normal and keep Hydra open
         (setq my/speed-dial-mode 'normal)
         (hydra-speed-dial/body))))))
 
