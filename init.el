@@ -487,7 +487,7 @@
            (target (nth (1- num) slotted-bms)))
       
       (cond
-       ;; --- NORMAL MODE: Just open the file ---
+       ;; --- NORMAL MODE ---
        ((eq my/speed-dial-mode 'normal)
         (if target
             (let ((file (bookmark-get-filename target)))
@@ -565,11 +565,21 @@
             (message "That slot is already empty!")
           (let* ((tags (bookmark-prop-get target 'tags))
                  (prop (intern (concat "slot-" tag))))
+            
+            ;; 1. Remove the target tag
             (setq tags (remove tag tags))
             (bookmark-prop-set target 'tags tags)
             (bookmark-prop-set target prop nil)
-            (bookmark-save)
-            (message "Untagged '%s' from [%s]" (file-name-nondirectory target) tag)))
+            
+            ;; 2. Check if the bookmark is an orphan now (no non-project tags remaining)
+            (let ((remaining-user-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
+              (if (not remaining-user-tags)
+                  (progn
+                    (bookmark-delete target)
+                    (message "Untagged '%s' and DELETED bookmark (no tags remaining)." (file-name-nondirectory target)))
+                ;; Else, just save the modified tags
+                (bookmark-save)
+                (message "Untagged '%s' from[%s]" (file-name-nondirectory target) tag)))))
         
         (setq my/speed-dial-mode 'normal)
         (hydra-speed-dial/body))))))
@@ -634,6 +644,7 @@
   (hydra-speed-dial/body))
 
 (defun my/hydra-wipe-tag ()
+  "Remove a specific tag from ALL bookmarks in the current workspace, deleting orphans."
   (interactive)
   (let* ((root (my/get-workspace))
          (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
@@ -641,13 +652,32 @@
          (clean-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) project-tags)))
     (if (not clean-tags)
         (message "No tags exist in this workspace!")
-      (let ((tag-to-nuke (completing-read "Wipe tag completely: " clean-tags nil t)))
+      (let ((tag-to-nuke (completing-read "Wipe tag completely: " clean-tags nil t))
+            (deleted-count 0)
+            (modified nil))
         (dolist (bm project-bms)
-          (let* ((bm-name (car bm)) (tags (bookmark-prop-get bm-name 'tags)))
-            (when (member tag-to-nuke tags) (bookmark-prop-set bm-name 'tags (remove tag-to-nuke tags)))))
-        (bookmark-save)
-        (when (string= my/current-speed-dial-tag tag-to-nuke) (setq my/current-speed-dial-tag nil))
-        (message "Wiped tag '%s' from all bookmarks." tag-to-nuke))))
+          (let* ((bm-name (car bm)) 
+                 (tags (bookmark-prop-get bm-name 'tags)))
+            ;; If this bookmark has the tag we are wiping...
+            (when (member tag-to-nuke tags)
+              (setq modified t)
+              (let ((new-tags (remove tag-to-nuke tags)))
+                (bookmark-prop-set bm-name 'tags new-tags)
+                
+                ;; Check if wiping this tag turned it into an orphan
+                (let ((remaining-user-tags (cl-remove-if (lambda (t-name) (string-prefix-p "proj:" t-name)) new-tags)))
+                  (when (not remaining-user-tags)
+                    (bookmark-delete bm-name)
+                    (setq deleted-count (1+ deleted-count))))))))
+        
+        ;; Save changes to the disk
+        (when modified (bookmark-save))
+        
+        ;; If the tag we wiped was locked to the right hand, unlock it
+        (when (string= my/current-speed-dial-tag tag-to-nuke) 
+          (setq my/current-speed-dial-tag nil))
+        
+        (message "Wiped tag '%s' (Deleted %d orphaned bookmarks)." tag-to-nuke deleted-count))))
   (hydra-speed-dial/body))
 
 (defun my/set-workspace-and-resume () (interactive) (call-interactively 'my/set-workspace) (hydra-speed-dial/body))
