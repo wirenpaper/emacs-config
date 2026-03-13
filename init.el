@@ -418,10 +418,12 @@
   "The manually selected workspace directory.")
 
 (defun my/set-workspace ()
-  "Manually lock Emacs into a specific workspace using a target file."
+  "Manually lock Emacs into a specific workspace directory."
   (interactive)
-  (let* ((target-file (read-file-name "Select workspace target file: "))
-         (root (expand-file-name (file-name-directory target-file))))
+  ;; 1. Use read-directory-name instead of read-file-name
+  ;; 2. Ensure it gets treated as a directory with a trailing slash
+  (let* ((target-dir (read-directory-name "Select workspace directory: "))
+         (root (expand-file-name (file-name-as-directory target-dir))))
     (setq my/current-workspace-root root)
     (setq my/current-speed-dial-tag nil) ;; Clear right-hand tag on switch
     (message "Workspace locked to: %s" root)))
