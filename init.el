@@ -1,55 +1,42 @@
+;; ==========================================
+;; 0. Keep Emacs custom UI settings out of init.el
+;; ==========================================
+(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
+(when (file-exists-p custom-file)
+  (load custom-file))
+
 ;; 1. Setup package archives (MELPA)
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
-(package-initialize)
 
-;; 2. Refresh contents if you haven't yet
-(unless package-archive-contents
-  (package-refresh-contents))
+;; 2. Setup use-package (Built into Emacs 29+)
+(require 'use-package)
+(setq use-package-always-ensure t)
 
 ;; ==========================================
 ;; 3. Install and enable Evil & Evil-Collection
 ;; ==========================================
 
-;; MUST BE SET BEFORE EVIL LOADS!
-;; This fixes the evil-collection warning by preventing Evil from
-;; loading its default (and conflicting) keybindings.
-(setq evil-want-integration t)
-(setq evil-want-keybinding nil)
-(setq evil-want-C-u-scroll t)   ; <--- ADD THIS LINE HERE
+(use-package evil
+  :init
+  (setq evil-want-integration t
+        evil-want-keybinding nil
+        evil-want-C-u-scroll t)
+  :config
+  (evil-mode 1)
+  (evil-set-leader 'normal (kbd "SPC")))
 
-;; Install and load Evil
-(unless (package-installed-p 'evil)
-  (package-install 'evil))
-(require 'evil)
-(evil-mode 1)
-;; Set Space as leader key
-(evil-set-leader 'normal (kbd "SPC"))
+(use-package evil-collection
+  :after evil
+  :config
+  (evil-collection-init))
 
-;; Install and load Evil-Collection
-(unless (package-installed-p 'evil-collection)
-  (package-install 'evil-collection))
-(require 'evil-collection)
-(evil-collection-init)
-
-;; ==========================================
-;; 4. getting plugins from github
-;; ==========================================
-(unless (package-installed-p 'quelpa)
-  (package-install 'quelpa))
-
-(require 'quelpa)
-;; Stop Quelpa from checking for MELPA recipe updates on every startup
-(setq quelpa-update-melpa-p nil)
-
-
-;; 5. general settings
+;; 4. general settings
 (define-key evil-normal-state-map (kbd "SPC f f") 'find-file)
 
 ;; setting english font
-(set-face-attribute 'default nil 
-		    :font "CMU Typewriter Text" 
-		    :height 200)
+(when (member "CMU Typewriter Text" (font-family-list))
+  (set-face-attribute 'default nil :font "CMU Typewriter Text" :height 200))
 
 ;; reload emacs
 (defun my/reload-config ()
@@ -109,180 +96,115 @@
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
 ;; ==========================================
-;; 6. Setup Org-Mode & Evil-Org
+;; 5. Setup Org-Mode & Evil-Org
 ;; ==========================================
 
 ;; Load built-in org-mode
 (require 'org)
 
-;; Install evil-org from MELPA
-(unless (package-installed-p 'evil-org)
-  (package-install 'evil-org))
-(require 'evil-org)
-
-;; Automatically enable evil-org-mode whenever you open an .org file
-(add-hook 'org-mode-hook 'evil-org-mode)
-
-;; Load the standard Evil-org key themes
-;; This gives you the proper Vim-like behavior for navigating headings,
-;; folding with Tab, and interacting with lists.
-(evil-org-set-key-theme '(navigation insert textobjects additional calendar))
-
-;; (Optional but Highly Recommended) 
-;; Enable Evil bindings in the Org Agenda
-(require 'evil-org-agenda)
-(evil-org-agenda-set-keys)
+(use-package evil-org
+  :hook (org-mode . evil-org-mode)
+  :config
+  (require 'evil-org-agenda)
+  (evil-org-agenda-set-keys)
+  (evil-org-set-key-theme '(navigation insert textobjects additional calendar)))
 
 ;; ==========================================
-;; 7. Setup Org-Roam
+;; 6. Setup Org-Roam
 ;; ==========================================
 
-;; Install org-roam from MELPA
-(unless (package-installed-p 'org-roam)
-  (package-install 'org-roam))
-(require 'org-roam)
+(setq org-roam-directory (expand-file-name "~/org-roam"))
 
-;; Set the directory where your Roam notes will be saved
-;; `file-truename` is important for org-roam to work correctly
-(setq org-roam-directory (file-truename "~/org-roam"))
+(use-package org-roam
+  :config
+  (unless (file-exists-p org-roam-directory)
+    (make-directory org-roam-directory))
+  (org-roam-db-autosync-mode)
+  :bind
+  (:map evil-normal-state-map
+        ("SPC n l" . org-roam-buffer-toggle)
+        ("SPC n f" . org-roam-node-find)
+        ("SPC n i" . org-roam-node-insert)
+        ("SPC n s" . org-roam-db-sync)))
 
-;; Create the directory automatically if it doesn't exist yet
-(unless (file-exists-p org-roam-directory)
-  (make-directory org-roam-directory))
-
-;; Start the background database sync (essential for Org-Roam v2)
-(org-roam-db-autosync-mode)
-
-;; -- Evil Keybindings for Org-Roam --
-;; We will use "SPC n" (Space -> Notes) as the prefix for Roam commands.
-
-;; SPC n l: Toggles the Roam side-panel (shows backlinks/unlinked references)
-(define-key evil-normal-state-map (kbd "SPC n l") 'org-roam-buffer-toggle)
-
-;; SPC n f: Find or create a node (your main entry point)
-(define-key evil-normal-state-map (kbd "SPC n f") 'org-roam-node-find)
-
-;; SPC n i: Insert a link to another node at your current cursor position
-(define-key evil-normal-state-map (kbd "SPC n i") 'org-roam-node-insert)
 ;; ==========================================
-;; 8. Org-Roam-UI (The Obsidian-style Graph)
+;; 7. Org-Roam-UI (The Obsidian-style Graph)
 ;; ==========================================
 
 ;; Install org-roam-ui
-(unless (package-installed-p 'org-roam-ui)
-  (package-install 'org-roam-ui))
+(use-package org-roam-ui
+  :custom
+  (org-roam-ui-sync-theme t)
+  (org-roam-ui-follow t)
+  (org-roam-ui-update-on-save t)
+  (org-roam-ui-open-on-start t)
+  :bind
+  (:map evil-normal-state-map
+        ("SPC n g" . org-roam-ui-mode)))
 
-(require 'org-roam-ui)
-
-;; Configure ORUI to use xwidgets so it opens INSIDE Emacs
-(setq org-roam-ui-sync-theme t
-      org-roam-ui-follow t
-      org-roam-ui-update-on-save t
-      org-roam-ui-open-on-start t)
-
-;; Bind SPC n g to open the Graph View
-(define-key evil-normal-state-map (kbd "SPC n g") 'org-roam-ui-mode)
 ;; Make the Space key type a normal space in search menus
 ;; instead of trying to autocomplete
 (define-key minibuffer-local-completion-map (kbd "SPC") 'self-insert-command)
-;;(org-roam-db-autosync-mode 1)
-;; SPC n s: Manually sync the Org-Roam database (fixes missing backlinks)
-(define-key evil-normal-state-map (kbd "SPC n s") 'org-roam-db-sync)
 
 ;; ==========================================
-;; 9. Setup Org-Transclusion
+;; 8. Setup Org-Transclusion
 ;; ==========================================
 
-;; Install org-transclusion from MELPA
-(unless (package-installed-p 'org-transclusion)
-  (package-install 'org-transclusion))
-(require 'org-transclusion)
-
-;; -- Evil Keybindings for Org-Transclusion --
-
-;; SPC n t: Toggle transclusions in the current buffer (turns links into actual text)
-(define-key evil-normal-state-map (kbd "SPC n t") 'org-transclusion-mode)
-
-;; SPC n a: Helper to quickly add a transclusion link at your cursor
-(define-key evil-normal-state-map (kbd "SPC n a") 'org-transclusion-add)
+(use-package org-transclusion
+  :bind
+  (:map evil-normal-state-map
+        ("SPC n t" . org-transclusion-mode)
+        ("SPC n a" . org-transclusion-add)))
 
 ;; ==========================================
-;; 10. Setup Org-Download
+;; 9. Setup Org-Download
 ;; ==========================================
 
-;; Install org-download
-(unless (package-installed-p 'org-download)
-  (package-install 'org-download))
-(require 'org-download)
-
-;; Drag-and-drop to Dired and Org buffers
-(add-hook 'dired-mode-hook 'org-download-enable)
-(add-hook 'org-mode-hook 'org-download-enable)
-
-;; Save images in a sub-folder called "images" inside your org-roam directory
-(setq-default org-download-image-dir (concat org-roam-directory "/images"))
-
+(use-package org-download
+  :hook ((dired-mode . org-download-enable)
+         (org-mode . org-download-enable))
+  :custom
+  (org-download-image-dir (concat org-roam-directory "/images")))
 
 ;; ==========================================
-;; 11. Setup Org-Capture
+;; 10. Setup Org-Capture
 ;; ==========================================
 
-;; Set a file for your messy, temporary thoughts
-(setq org-default-notes-file (concat org-roam-directory "/inbox.org"))
-
-;; Setup the capture template
-(setq org-capture-templates
-      '(("i" "Inbox / Fleeting Note" entry (file org-default-notes-file)
-	 "* %?\n%U\n%i" :empty-lines 1)))
-
-;; Bind it to SPC n c (Capture)
-(define-key evil-normal-state-map (kbd "SPC n c") 'org-capture)
-
-;; ==========================================
-;; 12. Setup Org-Appear
-;; ==========================================
-
-(unless (package-installed-p 'org-appear)
-  (package-install 'org-appear))
-(require 'org-appear)
-
-;; Make emphasis markers (*bold*, /italic/) hidden by default in org-mode
-(setq org-hide-emphasis-markers t)
-
-;; Enable org-appear in org-mode so they reveal when the cursor is on them
-(add-hook 'org-mode-hook 'org-appear-mode)
-
-;; Tell org-appear to also reveal links when the cursor is over them
-(setq org-appear-autoemphasis t
-      org-appear-autolinks t
-      org-appear-autosubmarkers t)
+(use-package org-capture
+  :ensure nil ; It's built into Emacs!
+  :custom
+  (org-default-notes-file (concat org-roam-directory "/inbox.org"))
+  (org-capture-templates
+   '(("i" "Inbox / Fleeting Note" entry (file org-default-notes-file)
+      "* %?\n%U\n%i" :empty-lines 1)))
+  :bind
+  (:map evil-normal-state-map
+        ("SPC n c" . org-capture)))
 
 ;; ==========================================
-;; 13. Setup Eshell & Eat (TUI support in Emacs)
+;; 11. Setup Org-Appear
 ;; ==========================================
 
-;; Install Eat
-;; (Eat is available on NonGNU ELPA, which is enabled by default in Emacs 28+)
-(unless (package-installed-p 'eat)
-  (package-install 'eat))
-(require 'eat)
+(use-package org-appear
+  :hook (org-mode . org-appear-mode)
+  :custom
+  (org-hide-emphasis-markers t)
+  (org-appear-autoemphasis t)
+  (org-appear-autolinks t)
+  (org-appear-autosubmarkers t))
 
-;; Hook Eat into Eshell
-;; 1. Enable Eat's visual command mode for Eshell
-;;    (This tells Eshell to use Eat to draw TUIs like htop, vim, lazygit)
-(add-hook 'eshell-load-hook #'eat-eshell-visual-command-mode)
+;; ==========================================
+;; 12. Setup Eshell & Eat (TUI support in Emacs)
+;; ==========================================
 
-;; 2. Enable general Eat integration in Eshell
-(add-hook 'eshell-load-hook #'eat-eshell-mode)
-
-;; Bind "SPC e" to quickly open/jump to Eshell
-(define-key evil-normal-state-map (kbd "SPC e") 'eshell)
-
-;; IMPORTANT FOR EVIL USERS:
-;; Tell Evil to start in 'emacs' state when an Eat terminal buffer opens.
-;; This ensures that when you run 'htop' or 'lazygit', your keystrokes 
-;; go directly to the app instead of triggering Vim commands.
-(evil-set-initial-state 'eat-mode 'emacs)
+(use-package eat
+  :hook ((eshell-load . eat-eshell-visual-command-mode)
+         (eshell-load . eat-eshell-mode))
+  :config
+  (evil-set-initial-state 'eat-mode 'emacs)
+  :bind
+  (:map evil-normal-state-map
+        ("SPC e" . eshell)))
 
 ;; ==========================================
 ;; ESHELL / EAT TERMINAL FIXES
@@ -301,13 +223,13 @@
 	    (local-set-key (kbd "C-l") 'my/eshell-clear-buffer)))
 
 ;; ==========================================
-;; 14. Setup Standard Bookmarks
+;; 13. Setup Standard Bookmarks
 ;; ==========================================
 
 (require 'bookmark)
 
 ;; Automatically save bookmarks to your bookmark file whenever one is made/changed
-(setq bookmark-save-flag 1)
+(setq bookmark-save-flag nil)
 
 ;; -- Evil Keybindings for Bookmarks --
 ;; We will use "SPC b" as the prefix for all Bookmark commands.
@@ -338,7 +260,7 @@
 	    (define-key bookmark-bmenu-mode-map (kbd "<escape>") 'quit-window)))
 
 ;; ==========================================
-;; 15. Project-Specific Bookmarks
+;; 14. Project-Specific Bookmarks
 ;; ==========================================
 (require 'project)
 (require 'cl-lib)
@@ -370,7 +292,7 @@
 (define-key evil-normal-state-map (kbd "SPC b p") 'my/project-bookmark-jump)
 
 ;; ==========================================
-;; 16. Manual Workspace State
+;; 15. Manual Workspace State
 ;; ==========================================
 (defvar my/current-workspace-root nil
   "The manually selected workspace directory.")
@@ -393,7 +315,7 @@
 (define-key evil-normal-state-map (kbd "SPC a p") 'my/set-workspace)
 
 ;; ==========================================
-;; 17. Project-Scoped Tagging
+;; 16. Project-Scoped Tagging
 ;; ==========================================
 (defun my/bookmark-tag-current-file ()
   "Tag the current file and link it to the locked workspace."
@@ -418,13 +340,11 @@
 (define-key evil-normal-state-map (kbd "SPC b t") 'my/bookmark-tag-current-file)
 
 ;; ==========================================
-;; 18. Split-Keyboard Speed-Dial (HYDRA HUD + MANAGER)
+;; 17. Split-Keyboard Speed-Dial (HYDRA HUD + MANAGER)
 ;; ==========================================
 
 ;; Install Hydra
-(unless (package-installed-p 'hydra)
-  (package-install 'hydra))
-(require 'hydra)
+(use-package hydra)
 
 (defvar my/current-speed-dial-tag nil "The currently active dynamic tag (Right Hand).")
 (defvar my/speed-dial-mode 'normal "Can be 'normal, 'pick, 'drop, 'tag, or 'untag")
@@ -841,7 +761,7 @@ _v_: %s(my/sd-name 'left 8) 	_/_: %s(my/sd-name 'right 8)  	_p_: Lock Workspace 
   ("T" my/hydra-start-tag) ("F" my/hydra-find-and-tag) ("U" my/hydra-start-untag) ("M" my/hydra-start-move)
   ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag) ("X" my/hydra-wipe-workspace)    
   ("p" my/set-workspace-and-resume) ("t" my/set-tag-and-resume)
-  ("q" my/hydra-quit) ("<escape>" my/hydra-quit))
+  ("q" my/hydra-quit) ("<escape>" my/hydra-quit) ("C-g" my/hydra-quit))
 
 ;; Bind standard 'SPC b m' to our new absolute path command
 (define-key evil-normal-state-map (kbd "SPC b m") 'my/bookmark-set-absolute)

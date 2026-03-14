@@ -12,3 +12,6 @@ nano.170092.save
 org-roam.db
 places
 transient/
+\#init.el\#
+custom.el
+custom.el~
