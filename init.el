@@ -761,8 +761,8 @@
 	  ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
 	  ^TAG (R)^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>> [MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" (if (and my/pending-move-bm (file-name-absolute-p my/pending-move-bm)) (file-name-nondirectory my/pending-move-bm) my/pending-move-bm))) ((eq my/speed-dial-mode 'untag) \"\n\n  >>> [UNTAG MODE] PRESS THE KEY OF THE SLOT YOU WANT TO UNTAG <<<\") ((eq my/speed-dial-mode 'tag) \"\n\n  >>> [TAG MODE] PRESS A SLOT KEY TO TAG AND ASSIGN THE CURRENT FILE <<<\") (t \"\"))
 
-	  ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)    ^MANAGEMENT^
-	  ^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
+	  ^GLOBAL^ (Left Hand)      ^DYNAMIC^ (Right Hand)     ^MANAGEMENT^
+	  ------------------      --------------------     ----------  
 	  _a_: %s(my/sd-name 'left 1) _j_: %s(my/sd-name 'right 1)  _T_: Tag Current File (Active)
 	  _s_: %s(my/sd-name 'left 2) _k_: %s(my/sd-name 'right 2)  _U_: Untag a Slot
 	  _d_: %s(my/sd-name 'left 3) _l_: %s(my/sd-name 'right 3)  _M_: Toggle Move Mode       
@@ -770,8 +770,8 @@
 	  _z_: %s(my/sd-name 'left 5) _m_: %s(my/sd-name 'right 5)  _W_: Wipe Tag Completely
 	  _x_: %s(my/sd-name 'left 6) _,_: %s(my/sd-name 'right 6)  _X_: Nuke Workspace 
 	  _c_: %s(my/sd-name 'left 7) _._: %s(my/sd-name 'right 7)  ^CONTROLS^
-	  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  ^^^^^^^^^^
-	  _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
+	  _v_: %s(my/sd-name 'left 8) _/_: %s(my/sd-name 'right 8)  --------  
+	  						   _p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
 	  "
 	  ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
 	  ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
