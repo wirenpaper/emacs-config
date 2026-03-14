@@ -639,7 +639,7 @@
   [f]: %-22s  [;]: %-22s
   [z]: %-22s  [m]: %-22s
   [x]: %-22s  [,]: %-22s                      
-  [c]: %-22s  [.]: %-22s                      
+  [c]: %-22s  [.]: %-22s
   [v]: %-22s  [/]: %-22s
 "
                   (or my/current-workspace-root "[None Locked]")
@@ -659,9 +659,21 @@
     (with-current-buffer buf
       (erase-buffer)
       (insert (propertize hud-text 'face 'bold))
-      (setq-local mode-line-format nil header-line-format nil cursor-type nil truncate-lines t))
+      (setq-local mode-line-format nil 
+                  header-line-format nil 
+                  cursor-type nil 
+                  truncate-lines t
+                  ;; [FIX 1] Lock the window height so completions don't shrink it
+                  window-size-fixed t))
     
-    (setq win (display-buffer buf '((display-buffer-at-bottom) (window-height . fit-window-to-buffer))))
+    ;; [FIX 2] Use a 'side-window' at the TOP so it avoids bottom-anchored minibuffer growth
+    (setq win (display-buffer buf 
+                              '((display-buffer-in-side-window) 
+                                (side . top) 
+                                (window-height . fit-window-to-buffer))))
+                                
+    ;;[FIX 3] Dedicate the window so the *Completions* buffer is never allowed to overwrite it
+    (set-window-dedicated-p win t)
     
     (condition-case nil
         (unwind-protect
@@ -732,7 +744,7 @@
              (target (when slotted-bms (nth (1- num) slotted-bms))))
         (when target
           (setq val (if (file-name-absolute-p target) (file-name-nondirectory target) target)))))
-    (truncate-string-to-width val 20 0 ?\s "…")))
+    (truncate-string-to-width val 35 0 ?\s "…")))
 
 (defun my/hydra-create-tag ()
   (interactive)
