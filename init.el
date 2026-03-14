@@ -164,19 +164,6 @@
 
 ;; SPC n i: Insert a link to another node at your current cursor position
 (define-key evil-normal-state-map (kbd "SPC n i") 'org-roam-node-insert)
-(custom-set-variables
-  ;; custom-set-variables was added by Custom.
-  ;; If you edit it by hand, you could mess it up, so be careful.
-  ;; Your init file should contain only one such instance.
-  ;; If there is more than one, they won't work right.
-  '(bmkp-last-as-first-bookmark-file "~/.emacs.d/bookmarks")
-  '(package-selected-packages nil))
-(custom-set-faces
-  ;; custom-set-faces was added by Custom.
-  ;; If you edit it by hand, you could mess it up, so be careful.
-  ;; Your init file should contain only one such instance.
-  ;; If there is more than one, they won't work right.
-  )
 ;; ==========================================
 ;; 8. Org-Roam-UI (The Obsidian-style Graph)
 ;; ==========================================
