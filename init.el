@@ -57,6 +57,24 @@
     ;; Assign the font to Emacs' Arabic fontset
     (set-fontset-font t 'arabic (font-spec :family my-arabic-font))))
 
+;; ==========================================
+;; Fix RTL/Arabic Cursor Movement in Evil Mode
+;; ==========================================
+
+;; 1. Tell Emacs to strictly use visual cursor movement globally
+(setq visual-order-cursor-movement t)
+
+;; 2. Force Evil mode to respect visual movement
+(with-eval-after-load 'evil
+  ;; Fix the Arrow Keys in Normal/Visual mode
+  (define-key evil-motion-state-map (kbd "<left>") 'left-char)
+  (define-key evil-motion-state-map (kbd "<right>") 'right-char)
+  
+  ;; PRO-TIP: You can also fix 'h' and 'l' so your home-row keys 
+  ;; traverse Arabic visually just like the arrow keys!
+  (define-key evil-motion-state-map (kbd "h") 'left-char)
+  (define-key evil-motion-state-map (kbd "l") 'right-char))
+
 ;; reload emacs
 (defun my/reload-config ()
   "Reload your Emacs init.el file instantly."
