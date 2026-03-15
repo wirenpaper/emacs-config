@@ -39,9 +39,23 @@
 
 (evil-define-key 'normal 'global (kbd "<leader> f f") 'find-file)
 
-;; setting english font
-(when (member "CMU Typewriter Text" (font-family-list))
-  (set-face-attribute 'default nil :font "CMU Typewriter Text" :height 200))
+;; ==========================================
+;; Typography / Font Settings
+;; ==========================================
+
+(let ((my-english-font "CMU Typewriter Text")
+      (my-arabic-font  "Scheherazade New"))
+
+  ;; 1. Set the main UI font (English/Code)
+  (when (member my-english-font (font-family-list))
+    (set-face-attribute 'default nil :font my-english-font :height 200))
+
+  ;; 2. Set the fallback font specifically for the Arabic script
+  (when (member my-arabic-font (font-family-list))
+    ;; Automatically scale the Arabic font up by 35% so it matches the English font
+    (add-to-list 'face-font-rescale-alist (cons my-arabic-font 1.35))
+    ;; Assign the font to Emacs' Arabic fontset
+    (set-fontset-font t 'arabic (font-spec :family my-arabic-font))))
 
 ;; reload emacs
 (defun my/reload-config ()
@@ -202,13 +216,35 @@
 ;; 12. Setup Eshell & Eat (TUI support in Emacs)
 ;; ==========================================
 
+(defun my/eshell-workspace ()
+  "Open Eshell. If a workspace is locked via my-speed-dial, open it there."
+  (interactive)
+  ;; Figure out the target directory (fallback to current dir if no workspace is locked)
+  (let ((target-dir (if (and (boundp 'my/current-workspace-root)
+                             my/current-workspace-root)
+                        my/current-workspace-root
+                      default-directory)))
+    
+    ;; Open Eshell, forcing it to use the target directory if it's opening fresh
+    (let ((default-directory target-dir))
+      (eshell))
+    
+    ;; If Eshell was ALREADY running but in an old directory, 
+    ;; automatically CD into the new locked workspace!
+    (when (and (eq major-mode 'eshell-mode)
+               (not (string= (expand-file-name default-directory)
+                             (expand-file-name target-dir))))
+      (goto-char (point-max))
+      (insert (format "cd '%s'" target-dir))
+      (eshell-send-input))))
+
 (use-package eat
   :hook ((eshell-load . eat-eshell-visual-command-mode)
          (eshell-load . eat-eshell-mode))
   :init
-  ;; Moving the keybinding to :init ensures it loads instantly on startup!
+  ;; Bind <leader> e to our new smart workspace-aware function!
   (evil-define-key 'normal 'global
-    (kbd "<leader> e") 'eshell)
+    (kbd "<leader> e") 'my/eshell-workspace)
   :config
   (evil-set-initial-state 'eat-mode 'emacs))
 
