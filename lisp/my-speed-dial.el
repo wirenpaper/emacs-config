@@ -3,107 +3,49 @@
 (require 'bookmark)
 (require 'cl-lib)
 
-;; ==========================================
-;; 1. Workspace-Scoped Bookmarks (Global State)
-;; ==========================================
-(require 'cl-lib)
+;; Ensure required packages are loaded for macros
+(use-package evil :ensure t)
+(use-package hydra :ensure t)
 
-(defun my/project-bookmark-jump ()
-  "Jump to a bookmark inside your manually locked workspace, from anywhere."
-  (interactive)
-  (bookmark-maybe-load-default-file)
-  
-  ;; 1. Check if you've locked a workspace via '<leader> a p'
-  (if-let ((root my/current-workspace-root))
-      (let* (
-             ;; 2. Filter bookmarks. Since your Hydra tags them with "proj:<root>",
-             ;; we can look for that tag! This is even better than checking file paths,
-             ;; because it works for terminals and dired buffers too.
-             (workspace-bms (cl-remove-if-not
-                             (lambda (bm)
-                               (let* ((bm-name (car bm))
-                                      (tags (bookmark-prop-get bm-name 'tags))
-                                      (proj-tag (concat "proj:" root)))
-                                 (member proj-tag tags)))
-                             bookmark-alist))
-             
-             ;; 3. Extract the names of the matched bookmarks
-             (names (mapcar #'car workspace-bms)))
-        
-        ;; 4. Show the menu, or warn if empty
-        (if names
-            (let* ((project-name (file-name-nondirectory (directory-file-name root)))
-                   (choice (completing-read (format "Workspace Bookmarks [%s]: " project-name) names)))
-              (bookmark-jump choice))
-          (message "No bookmarks found in locked workspace: %s" root)))
-    
-    ;; If my/current-workspace-root is nil, tell the user to lock one
-    (message "No workspace locked! Press '<leader> a p' to select one first.")))
-
-(use-package evil)
-;; Bind it to <leader> b p
-(evil-define-key 'normal 'global (kbd "<leader> b p") 'my/project-bookmark-jump)
+;; Tell the byte-compiler that this function will be generated later by `defhydra`
+;; This prevents "undefined function" warnings and allows compiler optimizations.
+(declare-function hydra-speed-dial/body "my-speed-dial")
 
 ;; ==========================================
-;; 2. Manual Workspace State
+;; 1. GLOBAL STATE & VARIABLES
 ;; ==========================================
+;; All defvars must be at the top so the byte-compiler knows they exist
+;; and correctly handles them in lexically-bound functions.
+
 (defvar my/current-workspace-root nil
   "The manually selected workspace directory.")
 
-(defun my/set-workspace ()
-  "Manually lock Emacs into a specific workspace directory."
-  (interactive)
-  (let* ((target-dir (read-directory-name "Select workspace directory: "))
-	 (root (expand-file-name (file-name-as-directory target-dir))))
-    (setq my/current-workspace-root root)
-    (setq my/current-speed-dial-tag nil) ;; Clear right-hand tag on switch
-    (message "Workspace locked to: %s" root)))
+(defvar my/current-speed-dial-tag nil 
+  "The currently active dynamic tag (Right Hand).")
+
+(defvar my/speed-dial-mode 'normal 
+  "Can be 'normal, 'pick, 'drop, 'tag, or 'untag")
+
+(defvar my/pending-move-bm nil 
+  "Bookmark currently being moved.")
+
+(defvar my/pending-move-board nil 
+  "Board where the bookmark originated.")
+
+(defvar my/pending-tag-target nil 
+  "A file selected in the background waiting to be assigned a slot.")
+
+
+;; ==========================================
+;; 2. CORE HELPERS & UTILITIES
+;; ==========================================
+;; Functions called by other functions should be defined first.
 
 (defun my/get-workspace ()
   "Return the active workspace, or throw an error if none is set."
   (unless my/current-workspace-root
     (error "No workspace locked! Use <leader> a p to select your target file"))
   my/current-workspace-root)
-
-(evil-define-key 'normal 'global (kbd "<leader> a p") 'my/set-workspace)
-
-;; ==========================================
-;; 3. Project-Scoped Tagging
-;; ==========================================
-(defun my/bookmark-tag-current-file ()
-  "Tag the current file and link it to the locked workspace."
-  (interactive)
-  (let* ((root (my/get-workspace))
-	 (proj-tag (concat "proj:" root))
-	 (bm-name (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
-	 (project-name (file-name-nondirectory (directory-file-name root)))
-	 (new-tag (read-string (format "Tag %s for workspace '%s': " bm-name project-name))))
-
-    (unless (assoc bm-name bookmark-alist)
-      (bookmark-set bm-name))
-
-    (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
-      (unless (member new-tag existing-tags) (push new-tag existing-tags))
-      (unless (member proj-tag existing-tags) (push proj-tag existing-tags))
-
-      (bookmark-prop-set bm-name 'tags existing-tags)
-      (bookmark-save)
-      (message "Successfully tagged '%s' as [%s] in '%s'" bm-name new-tag project-name))))
-
-(evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
-
-;; ==========================================
-;; 4. Split-Keyboard Speed-Dial (HYDRA HUD + MANAGER)
-;; ==========================================
-
-;; Install Hydra
-(use-package hydra)
-
-(defvar my/current-speed-dial-tag nil "The currently active dynamic tag (Right Hand).")
-(defvar my/speed-dial-mode 'normal "Can be 'normal, 'pick, 'drop, 'tag, or 'untag")
-(defvar my/pending-move-bm nil "Bookmark currently being moved.")
-(defvar my/pending-move-board nil "Board where the bookmark originated.")
-(defvar my/pending-tag-target nil "A file selected in the background waiting to be assigned a slot.")
 
 (defun my/bookmark-belongs-to-workspace-p (bm root)
   "Check if bookmark BM belongs strictly to the active ROOT workspace."
@@ -118,6 +60,50 @@
             (cl-remove-if-not
              (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root))
              bookmark-alist))))
+
+(defun my/get-bookmarks-in-slots (bm-names tag root)
+  (let* ((prop (intern (format "slot|%s|%s" root tag)))
+         (slots (make-vector 8 nil))
+         (unassigned nil))
+    (dolist (bm bm-names)
+      (let ((slot-num (bookmark-prop-get bm prop)))
+        (if (and (integerp slot-num) (>= slot-num 1) (<= slot-num 8))
+            (aset slots (1- slot-num) bm)
+          (push bm unassigned))))
+    (setq unassigned (sort unassigned #'string<))
+    (dotimes (i 8)
+      (when (and (null (aref slots i)) unassigned)
+        (aset slots i (pop unassigned))))
+    (append slots nil)))
+
+(defun my/sd-name (side num)
+  (bookmark-maybe-load-default-file)
+  (let ((val "-"))
+    (when my/current-workspace-root
+      (let* ((root my/current-workspace-root)
+             (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+             (active-tag (if (eq side 'left) "global" my/current-speed-dial-tag))
+             (bms (when active-tag
+                    (let ((wt-tag (format "wt|%s|%s" root active-tag)))
+                      (cl-remove-if-not (lambda (bm) (member wt-tag (bookmark-prop-get bm 'tags))) project-bms))))
+             (slotted-bms (when active-tag (my/get-bookmarks-in-slots (mapcar #'car bms) active-tag root)))
+             (target (when slotted-bms (nth (1- num) slotted-bms))))
+        (when target
+          (setq val (if (file-name-absolute-p target) (file-name-nondirectory target) target)))))
+    (truncate-string-to-width val 35 0 ?\s "…")))
+
+;; ==========================================
+;; 3. WORKSPACE & TAGGING LOGIC
+;; ==========================================
+
+(defun my/set-workspace ()
+  "Manually lock Emacs into a specific workspace directory."
+  (interactive)
+  (let* ((target-dir (read-directory-name "Select workspace directory: "))
+         (root (expand-file-name (file-name-as-directory target-dir))))
+    (setq my/current-workspace-root root)
+    (setq my/current-speed-dial-tag nil) ;; Clear right-hand tag on switch
+    (message "Workspace locked to: %s" root)))
 
 (defun my/set-speed-dial-tag ()
   "Choose a tag for the RIGHT hand keys in the locked workspace."
@@ -135,10 +121,59 @@
         (message "No tags found! Press 'N' to tag a file first.")
       (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags)))))
 
+(defun my/project-bookmark-jump ()
+  "Jump to a bookmark inside your manually locked workspace, from anywhere."
+  (interactive)
+  (bookmark-maybe-load-default-file)
+  (if-let ((root my/current-workspace-root))
+      (let* ((workspace-bms (cl-remove-if-not
+                             (lambda (bm)
+                               (let* ((bm-name (car bm))
+                                      (tags (bookmark-prop-get bm-name 'tags))
+                                      (proj-tag (concat "proj:" root)))
+                                 (member proj-tag tags)))
+                             bookmark-alist))
+             (names (mapcar #'car workspace-bms)))
+        (if names
+            (let* ((project-name (file-name-nondirectory (directory-file-name root)))
+                   (choice (completing-read (format "Workspace Bookmarks [%s]: " project-name) names)))
+              (bookmark-jump choice))
+          (message "No bookmarks found in locked workspace: %s" root)))
+    (message "No workspace locked! Press '<leader> a p' to select one first.")))
+
+(defun my/bookmark-tag-current-file ()
+  "Tag the current file and link it to the locked workspace."
+  (interactive)
+  (let* ((root (my/get-workspace))
+         (proj-tag (concat "proj:" root))
+         (bm-name (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
+         (project-name (file-name-nondirectory (directory-file-name root)))
+         (new-tag (read-string (format "Tag %s for workspace '%s': " bm-name project-name))))
+    (unless (assoc bm-name bookmark-alist)
+      (bookmark-set bm-name))
+    (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
+      (unless (member new-tag existing-tags) (push new-tag existing-tags))
+      (unless (member proj-tag existing-tags) (push proj-tag existing-tags))
+      (bookmark-prop-set bm-name 'tags existing-tags)
+      (bookmark-save)
+      (message "Successfully tagged '%s' as [%s] in '%s'" bm-name new-tag project-name))))
+
+(defun my/bookmark-set-absolute ()
+  "Bookmark current buffer. Uses absolute path, or appends directory for special buffers."
+  (interactive)
+  (let* ((default-name (if buffer-file-name 
+                           (expand-file-name buffer-file-name) 
+                         (concat (buffer-name) "[" (abbreviate-file-name default-directory) "]")))
+         (bm-name (read-string (format "Set bookmark (%s): " default-name) nil nil default-name)))
+    (bookmark-set bm-name)))
+
+;; ==========================================
+;; 4. CORE SPEED DIAL LOGIC
+;; ==========================================
+
 (defun my/speed-dial-jump (tag num)
   "Jump to the NUM-th bookmark of TAG, handle Move, Tag, OR handle Untag."
   (bookmark-maybe-load-default-file)
-
   (if (not tag)
       (progn
         (message "No dynamic tag set for the right hand! Press 't' to lock one.")
@@ -158,23 +193,15 @@
         (if target
             (let ((file-path (bookmark-get-filename target)))
               (cond
-               ;; 1. The path is physically missing from the hard drive -> Auto-clean
                ((and file-path (not (file-exists-p file-path)))
                 (message "Path '%s' no longer exists! Auto-cleaning bookmark..." file-path)
                 (bookmark-delete target)
                 (bookmark-save)
                 (hydra-speed-dial/body))
-
-               ;; 2. It's a standard FILE -> Switch buffer or find-file to preserve cursor position
                ((and file-path (not (file-directory-p file-path)))
                 (let ((buf (get-file-buffer file-path)))
-                  (if buf
-                      (switch-to-buffer buf)   ; Buffer is open, alt-tab to it
-                    (find-file file-path))))   ; File is closed, open it
-
-               ;; 3. It's a SPECIAL buffer (Dired, Eshell, Magit) -> Use native bookmark handler
-               (t
-                (bookmark-jump target))))
+                  (if buf (switch-to-buffer buf) (find-file file-path))))
+               (t (bookmark-jump target))))
           (message "Empty slot")))
 
        ;; --- TAG MODE ---
@@ -183,28 +210,22 @@
                             (if buffer-file-name (expand-file-name buffer-file-name) (buffer-name))))
                (proj-tag (concat "proj:" root))
                (prop (intern (format "slot|%s|%s" root tag))))
-
-          ;; If the bookmark doesn't exist yet, create it safely
           (unless (assoc bm-name bookmark-alist)
             (if my/pending-tag-target
-                ;; If it's a background file, momentarily load it silently to generate the bookmark
                 (with-current-buffer (find-file-noselect my/pending-tag-target)
                   (bookmark-set bm-name))
               (bookmark-set bm-name)))
-
           (dolist (other-bm (mapcar #'car project-bms))
             (when (and (not (string= other-bm bm-name)) (eq (bookmark-prop-get other-bm prop) num))
               (bookmark-prop-set other-bm prop nil)))
-
           (let ((existing-tags (bookmark-prop-get bm-name 'tags)))
             (unless (member wt-tag existing-tags) (push wt-tag existing-tags))
             (unless (member proj-tag existing-tags) (push proj-tag existing-tags))
             (bookmark-prop-set bm-name 'tags existing-tags))
-
           (bookmark-prop-set bm-name prop num)
           (bookmark-save)
           (setq my/speed-dial-mode 'normal)
-          (setq my/pending-tag-target nil) ;; Reset for next time
+          (setq my/pending-tag-target nil)
           (message "Tagged '%s' to slot %d on [%s]!" (file-name-nondirectory bm-name) num tag)
           (hydra-speed-dial/body)))
 
@@ -226,45 +247,36 @@
                (old-prop (intern (format "slot|%s|%s" root old-tag)))
                (wt-new-tag (format "wt|%s|%s" root new-tag))
                (wt-old-tag (format "wt|%s|%s" root old-tag)))
-
           (dolist (other-bm (mapcar #'car project-bms))
             (when (and (not (string= other-bm bm-name)) (eq (bookmark-prop-get other-bm new-prop) num))
               (bookmark-prop-set other-bm new-prop nil)))
-
           (bookmark-prop-set bm-name old-prop nil)
-
           (when (not (string= old-tag new-tag))
             (let ((tags (bookmark-prop-get bm-name 'tags)))
               (setq tags (remove wt-old-tag tags))
               (unless (member wt-new-tag tags) (push wt-new-tag tags))
               (bookmark-prop-set bm-name 'tags tags)))
-
           (bookmark-prop-set bm-name new-prop num)
           (bookmark-save)
-          (setq my/speed-dial-mode 'normal)
-          (setq my/pending-move-bm nil)
-          (setq my/pending-move-board nil)
-
+          (setq my/speed-dial-mode 'normal
+                my/pending-move-bm nil
+                my/pending-move-board nil)
           (message "Moved '%s' to slot %d on [%s]!" (file-name-nondirectory bm-name) num new-tag))
         (hydra-speed-dial/body))
 
-       ;; --- UNTAG MODE (With Global Garbage Collection) ---
+       ;; --- UNTAG MODE ---
        ((eq my/speed-dial-mode 'untag)
         (if (not target)
             (message "That slot is already empty!")
           (let* ((tags (bookmark-prop-get target 'tags))
                  (prop (intern (format "slot|%s|%s" root tag)))
                  (prefix (format "wt|%s|" root)))
-
             (setq tags (remove wt-tag tags))
             (bookmark-prop-set target prop nil)
-
             (let ((remaining-wt-for-root (cl-remove-if-not (lambda (t-name) (string-prefix-p prefix t-name)) tags)))
               (unless remaining-wt-for-root
                 (setq tags (remove (concat "proj:" root) tags))))
-
             (bookmark-prop-set target 'tags tags)
-
             (let ((remaining-proj (cl-remove-if-not (lambda (t-name) (string-prefix-p "proj:" t-name)) tags)))
               (if (not remaining-proj)
                   (progn
@@ -272,18 +284,18 @@
                     (message "Untagged '%s' and DELETED bookmark (not in any workspace)." (file-name-nondirectory target)))
                 (bookmark-save)
                 (message "Untagged '%s' from[%s]" (file-name-nondirectory target) tag)))))
-
         (setq my/speed-dial-mode 'normal)
         (hydra-speed-dial/body))))))
 
-;; --- HYDRA HELPER & MANAGEMENT FUNCTIONS ---
+;; ==========================================
+;; 5. HYDRA HELPER FUNCTIONS
+;; ==========================================
 
 (defun my/hydra-find-and-tag ()
   "Find a file to pin without visiting it immediately."
   (interactive)
   (setq my/speed-dial-mode 'tag)
   (setq my/pending-tag-target nil)
-  
   (let* ((original-dir default-directory) 
          (hud-text
           (format "
@@ -294,10 +306,9 @@
 
   GLOBAL (Left Hand)                DYNAMIC (Right Hand)
   [a]: %-22s  [j]: %-22s
-  [s]: %-22s  [k]: %-22s
+  [s]: %-22s[k]: %-22s
   [d]: %-22s  [l]: %-22s
-  [f]: %-22s  [;]: %-22s
-  [z]: %-22s  [m]: %-22s
+  [f]: %-22s  [;]: %-22s[z]: %-22s  [m]: %-22s
   [x]: %-22s  [,]: %-22s                      
   [c]: %-22s  [.]: %-22s
   [v]: %-22s  [/]: %-22s
@@ -323,16 +334,12 @@
                   header-line-format nil 
                   cursor-type nil 
                   truncate-lines t
-                  ;; [FIX 1] Lock the window height so completions don't shrink it
                   window-size-fixed t))
     
-    ;; [FIX 2] Use a 'side-window' at the TOP so it avoids bottom-anchored minibuffer growth
     (setq win (display-buffer buf 
                               '((display-buffer-in-side-window) 
                                 (side . top) 
                                 (window-height . fit-window-to-buffer))))
-                                
-    ;;[FIX 3] Dedicate the window so the *Completions* buffer is never allowed to overwrite it
     (set-window-dedicated-p win t)
     
     (condition-case nil
@@ -350,29 +357,21 @@
       
     (hydra-speed-dial/body)))
 
-(defun my/get-bookmarks-in-slots (bm-names tag root)
-  (let* ((prop (intern (format "slot|%s|%s" root tag)))
-         (slots (make-vector 8 nil))
-         (unassigned nil))
-    (dolist (bm bm-names)
-      (let ((slot-num (bookmark-prop-get bm prop)))
-        (if (and (integerp slot-num) (>= slot-num 1) (<= slot-num 8))
-            (aset slots (1- slot-num) bm)
-          (push bm unassigned))))
-    (setq unassigned (sort unassigned #'string<))
-    (dotimes (i 8)
-      (when (and (null (aref slots i)) unassigned)
-        (aset slots i (pop unassigned))))
-    (append slots nil)))
-
 (defun my/hydra-start-tag () 
   (interactive) 
   (setq my/pending-tag-target nil)
   (setq my/speed-dial-mode (if (eq my/speed-dial-mode 'normal) 'tag 'normal)) 
   (hydra-speed-dial/body))
 
-(defun my/hydra-start-move () (interactive) (setq my/speed-dial-mode (if (eq my/speed-dial-mode 'normal) 'pick 'normal)) (hydra-speed-dial/body))
-(defun my/hydra-start-untag () (interactive) (setq my/speed-dial-mode (if (eq my/speed-dial-mode 'normal) 'untag 'normal)) (hydra-speed-dial/body))
+(defun my/hydra-start-move () 
+  (interactive) 
+  (setq my/speed-dial-mode (if (eq my/speed-dial-mode 'normal) 'pick 'normal)) 
+  (hydra-speed-dial/body))
+
+(defun my/hydra-start-untag () 
+  (interactive) 
+  (setq my/speed-dial-mode (if (eq my/speed-dial-mode 'normal) 'untag 'normal)) 
+  (hydra-speed-dial/body))
 
 (defun my/hydra-quit () 
   (interactive) 
@@ -380,31 +379,6 @@
         my/pending-move-bm nil 
         my/pending-move-board nil
         my/pending-tag-target nil))
-
-(defun my/bookmark-set-absolute ()
-  "Bookmark current buffer. Uses absolute path, or appends directory for special buffers."
-  (interactive)
-  (let* ((default-name (if buffer-file-name 
-                           (expand-file-name buffer-file-name) 
-                         (concat (buffer-name) "[" (abbreviate-file-name default-directory) "]")))
-         (bm-name (read-string (format "Set bookmark (%s): " default-name) nil nil default-name)))
-    (bookmark-set bm-name)))
-
-(defun my/sd-name (side num)
-  (bookmark-maybe-load-default-file)
-  (let ((val "-"))
-    (when my/current-workspace-root
-      (let* ((root my/current-workspace-root)
-             (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
-             (active-tag (if (eq side 'left) "global" my/current-speed-dial-tag))
-             (bms (when active-tag
-                    (let ((wt-tag (format "wt|%s|%s" root active-tag)))
-                      (cl-remove-if-not (lambda (bm) (member wt-tag (bookmark-prop-get bm 'tags))) project-bms))))
-             (slotted-bms (when active-tag (my/get-bookmarks-in-slots (mapcar #'car bms) active-tag root)))
-             (target (when slotted-bms (nth (1- num) slotted-bms))))
-        (when target
-          (setq val (if (file-name-absolute-p target) (file-name-nondirectory target) target)))))
-    (truncate-string-to-width val 35 0 ?\s "…")))
 
 (defun my/hydra-create-tag ()
   (interactive)
@@ -483,10 +457,20 @@
         (message "Workspace clean successfully!"))))
   (hydra-speed-dial/body))
 
-(defun my/set-workspace-and-resume () (interactive) (call-interactively 'my/set-workspace) (hydra-speed-dial/body))
-(defun my/set-tag-and-resume () (interactive) (call-interactively 'my/set-speed-dial-tag) (hydra-speed-dial/body))
+(defun my/set-workspace-and-resume () 
+  (interactive) 
+  (call-interactively 'my/set-workspace) 
+  (hydra-speed-dial/body))
 
-;; THE HYDRA HUD
+(defun my/set-tag-and-resume () 
+  (interactive) 
+  (call-interactively 'my/set-speed-dial-tag) 
+  (hydra-speed-dial/body))
+
+;; ==========================================
+;; 6. HYDRA HUD MANAGER
+;; ==========================================
+
 (defhydra hydra-speed-dial (:color blue :hint nil)
   "
 ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
@@ -516,11 +500,19 @@ _v_: %s(my/sd-name 'left 8) 	_/_: %s(my/sd-name 'right 8)  	_p_: Lock Workspace 
   ("p" my/set-workspace-and-resume) ("t" my/set-tag-and-resume)
   ("q" my/hydra-quit) ("<escape>" my/hydra-quit) ("C-g" my/hydra-quit))
 
-;; Bind standard '<leader> b m' to our new absolute path command
-(evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
+;; ==========================================
+;; 7. KEYBINDINGS
+;; ==========================================
 
-;; Bind the Hydra
+;; 1. The main entry point to open the speed-dial HUD
 (evil-define-key 'normal 'global (kbd "<leader> a") 'hydra-speed-dial/body)
 
+;; 2. Bookmark management
+(evil-define-key 'normal 'global (kbd "<leader> b p") 'my/project-bookmark-jump)
+(evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
+(evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
+
+;; ==========================================
+;; my-speed-dial.el ends here
+;; ==========================================
 (provide 'my-speed-dial)
-;;; my-speed-dial.el ends here
