@@ -32,6 +32,11 @@
   (evil-collection-init))
 
 ;; 4. general settings
+(menu-bar-mode -1)      ;; Hide the top menu bar
+(tool-bar-mode -1)      ;; Hide the icon tool bar
+(scroll-bar-mode -1)    ;; Hide the side scroll bars
+;; (setq inhibit-startup-screen t) ;; Skip the splash screen
+
 (evil-define-key 'normal 'global (kbd "<leader> f f") 'find-file)
 
 ;; setting english font
@@ -200,10 +205,12 @@
 (use-package eat
   :hook ((eshell-load . eat-eshell-visual-command-mode)
          (eshell-load . eat-eshell-mode))
-  :config
-  (evil-set-initial-state 'eat-mode 'emacs)
+  :init
+  ;; Moving the keybinding to :init ensures it loads instantly on startup!
   (evil-define-key 'normal 'global
-    (kbd "<leader> e") 'eshell))
+    (kbd "<leader> e") 'eshell)
+  :config
+  (evil-set-initial-state 'eat-mode 'emacs))
 
 ;; ==========================================
 ;; ESHELL / EAT TERMINAL FIXES
@@ -268,3 +275,20 @@
 ;; 15. load your custom speed dial system
 ;; ==========================================
 (require 'my-speed-dial)
+
+;; ==========================================
+;; 16. Install and Setup ef-themes
+;; ==========================================
+
+(use-package ef-themes
+  :config
+  ;; Load your favorite theme by default on startup. 
+  ;; (Change 'ef-summer' to whatever theme you end up liking best!)
+  (load-theme 'ef-summer t)
+
+  ;; Evil keybindings for managing themes
+  (evil-define-key 'normal 'global
+    ;; Space t s -> Select a theme from a menu
+    (kbd "<leader> t s") 'ef-themes-select
+    ;; Space t t -> Toggle between a light and dark theme
+    (kbd "<leader> t t") 'ef-themes-toggle))
