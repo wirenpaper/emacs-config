@@ -229,6 +229,7 @@
 
 ;; Automatically save bookmarks to your bookmark file whenever one is made/changed
 (setq bookmark-save-flag nil)
+(add-hook 'kill-emacs-hook #'bookmark-save)
 
 ;; -- Evil Keybindings for Bookmarks --
 ;; We will use "<leader> b" as the prefix for all Bookmark commands.

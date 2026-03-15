@@ -40,6 +40,7 @@
     ;; If my/current-workspace-root is nil, tell the user to lock one
     (message "No workspace locked! Press '<leader> a p' to select one first.")))
 
+(use-package evil)
 ;; Bind it to <leader> b p
 (evil-define-key 'normal 'global (kbd "<leader> b p") 'my/project-bookmark-jump)
 
