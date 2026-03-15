@@ -32,7 +32,7 @@
   (evil-collection-init))
 
 ;; 4. general settings
-(define-key evil-normal-state-map (kbd "SPC f f") 'find-file)
+(evil-define-key 'normal 'global (kbd "<leader> f f") 'find-file)
 
 ;; setting english font
 (when (member "CMU Typewriter Text" (font-family-list))
@@ -44,7 +44,7 @@
   (interactive)
   (load-file user-init-file)
   (message "Config successfully reloaded!"))
-(define-key evil-normal-state-map (kbd "SPC h r r") 'my/reload-config)
+(evil-define-key 'normal 'global (kbd "<leader> h r r") 'my/reload-config)
 
 ;; ==========================================
 ;; Make ESC quit prompts and cancel chords (The Vim Way)
@@ -120,12 +120,12 @@
   (unless (file-exists-p org-roam-directory)
     (make-directory org-roam-directory))
   (org-roam-db-autosync-mode)
-  :bind
-  (:map evil-normal-state-map
-        ("SPC n l" . org-roam-buffer-toggle)
-        ("SPC n f" . org-roam-node-find)
-        ("SPC n i" . org-roam-node-insert)
-        ("SPC n s" . org-roam-db-sync)))
+  :config
+  (evil-define-key 'normal 'global
+    (kbd "<leader> n l") 'org-roam-buffer-toggle
+    (kbd "<leader> n f") 'org-roam-node-find
+    (kbd "<leader> n i") 'org-roam-node-insert
+    (kbd "<leader> n s") 'org-roam-db-sync))
 
 ;; ==========================================
 ;; 7. Org-Roam-UI (The Obsidian-style Graph)
@@ -138,9 +138,9 @@
   (org-roam-ui-follow t)
   (org-roam-ui-update-on-save t)
   (org-roam-ui-open-on-start t)
-  :bind
-  (:map evil-normal-state-map
-        ("SPC n g" . org-roam-ui-mode)))
+  :config
+  (evil-define-key 'normal 'global
+    (kbd "<leader> n g") 'org-roam-ui-mode))
 
 ;; Make the Space key type a normal space in search menus
 ;; instead of trying to autocomplete
@@ -151,10 +151,10 @@
 ;; ==========================================
 
 (use-package org-transclusion
-  :bind
-  (:map evil-normal-state-map
-        ("SPC n t" . org-transclusion-mode)
-        ("SPC n a" . org-transclusion-add)))
+  :config
+  (evil-define-key 'normal 'global
+    (kbd "<leader> n t") 'org-transclusion-mode
+    (kbd "<leader> n a") 'org-transclusion-add))
 
 ;; ==========================================
 ;; 9. Setup Org-Download
@@ -177,9 +177,9 @@
   (org-capture-templates
    '(("i" "Inbox / Fleeting Note" entry (file org-default-notes-file)
       "* %?\n%U\n%i" :empty-lines 1)))
-  :bind
-  (:map evil-normal-state-map
-        ("SPC n c" . org-capture)))
+  :config
+  (evil-define-key 'normal 'global
+    (kbd "<leader> n c") 'org-capture))
 
 ;; ==========================================
 ;; 11. Setup Org-Appear
@@ -202,9 +202,8 @@
          (eshell-load . eat-eshell-mode))
   :config
   (evil-set-initial-state 'eat-mode 'emacs)
-  :bind
-  (:map evil-normal-state-map
-        ("SPC e" . eshell)))
+  (evil-define-key 'normal 'global
+    (kbd "<leader> e") 'eshell))
 
 ;; ==========================================
 ;; ESHELL / EAT TERMINAL FIXES
@@ -232,16 +231,16 @@
 (setq bookmark-save-flag nil)
 
 ;; -- Evil Keybindings for Bookmarks --
-;; We will use "SPC b" as the prefix for all Bookmark commands.
+;; We will use "<leader> b" as the prefix for all Bookmark commands.
 
-;; SPC b l: Open the standard Bookmark Menu (bmenu)
-(define-key evil-normal-state-map (kbd "SPC b l") 'bookmark-bmenu-list)
+;; <leader> b l: Open the standard Bookmark Menu (bmenu)
+(evil-define-key 'normal 'global (kbd "<leader> b l") 'bookmark-bmenu-list)
 
-;; SPC b s: Set/Create a standard bookmark at your current cursor position
-(define-key evil-normal-state-map (kbd "SPC b s") 'bookmark-set)
+;; <leader> b s: Set/Create a standard bookmark at your current cursor position
+(evil-define-key 'normal 'global (kbd "<leader> b s") 'bookmark-set)
 
-;; SPC b j: Jump to a bookmark instantly via the minibuffer
-(define-key evil-normal-state-map (kbd "SPC b j") 'bookmark-jump)
+;; <leader> b j: Jump to a bookmark instantly via the minibuffer
+(evil-define-key 'normal 'global (kbd "<leader> b j") 'bookmark-jump)
 
 ;; ==========================================
 ;; BOOKMARK BMENU EVIL INTEGRATION
@@ -260,36 +259,44 @@
 	    (define-key bookmark-bmenu-mode-map (kbd "<escape>") 'quit-window)))
 
 ;; ==========================================
-;; 14. Project-Specific Bookmarks
+;; 14. Workspace-Scoped Bookmarks (Global State)
 ;; ==========================================
-(require 'project)
 (require 'cl-lib)
 
 (defun my/project-bookmark-jump ()
-  "Filter your master bookmarks and jump only to those inside the current project."
+  "Jump to a bookmark inside your manually locked workspace, from anywhere."
   (interactive)
   (bookmark-maybe-load-default-file)
-  ;; 1. Check if we are currently inside a project (e.g., a git repo)
-  (if-let ((pr (project-current)))
-	  (let* ((root (expand-file-name (project-root pr)))
-		 ;; 2. Scan global bookmarks and keep only ones matching the project path
-		 (project-bms (cl-remove-if-not
-				(lambda (bm)
-				  (let ((file (bookmark-get-filename bm)))
-				    (and file (string-prefix-p root (expand-file-name file)))))
-				bookmark-alist))
-		 ;; 3. Extract just the names of those bookmarks
-		 (names (mapcar #'car project-bms)))
-	    ;; 4. Show the narrowed list in the minibuffer, or warn if empty
-	    (if names
-	      (let* ((project-name (file-name-nondirectory (directory-file-name root)))
-		     (choice (completing-read (format "Project Bookmarks [%s]: " project-name) names)))
-		(bookmark-jump choice))
-	      (message "No bookmarks found for this project! (Press SPC b s to make one)")))
-	  (message "You are not currently in a project (no .git folder detected).")))
+  
+  ;; 1. Check if you've locked a workspace via '<leader> a p'
+  (if-let ((root my/current-workspace-root))
+      (let* (
+             ;; 2. Filter bookmarks. Since your Hydra tags them with "proj:<root>",
+             ;; we can look for that tag! This is even better than checking file paths,
+             ;; because it works for terminals and dired buffers too.
+             (workspace-bms (cl-remove-if-not
+                             (lambda (bm)
+                               (let* ((bm-name (car bm))
+                                      (tags (bookmark-prop-get bm-name 'tags))
+                                      (proj-tag (concat "proj:" root)))
+                                 (member proj-tag tags)))
+                             bookmark-alist))
+             
+             ;; 3. Extract the names of the matched bookmarks
+             (names (mapcar #'car workspace-bms)))
+        
+        ;; 4. Show the menu, or warn if empty
+        (if names
+            (let* ((project-name (file-name-nondirectory (directory-file-name root)))
+                   (choice (completing-read (format "Workspace Bookmarks [%s]: " project-name) names)))
+              (bookmark-jump choice))
+          (message "No bookmarks found in locked workspace: %s" root)))
+    
+    ;; If my/current-workspace-root is nil, tell the user to lock one
+    (message "No workspace locked! Press '<leader> a p' to select one first.")))
 
-;; Bind it to SPC b p (Bookmarks -> Project)
-(define-key evil-normal-state-map (kbd "SPC b p") 'my/project-bookmark-jump)
+;; Bind it to <leader> b p
+(evil-define-key 'normal 'global (kbd "<leader> b p") 'my/project-bookmark-jump)
 
 ;; ==========================================
 ;; 15. Manual Workspace State
@@ -309,10 +316,10 @@
 (defun my/get-workspace ()
   "Return the active workspace, or throw an error if none is set."
   (unless my/current-workspace-root
-    (error "No workspace locked! Use SPC a p to select your target file"))
+    (error "No workspace locked! Use <leader> a p to select your target file"))
   my/current-workspace-root)
 
-(define-key evil-normal-state-map (kbd "SPC a p") 'my/set-workspace)
+(evil-define-key 'normal 'global (kbd "<leader> a p") 'my/set-workspace)
 
 ;; ==========================================
 ;; 16. Project-Scoped Tagging
@@ -337,7 +344,7 @@
       (bookmark-save)
       (message "Successfully tagged '%s' as [%s] in '%s'" bm-name new-tag project-name))))
 
-(define-key evil-normal-state-map (kbd "SPC b t") 'my/bookmark-tag-current-file)
+(evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
 
 ;; ==========================================
 ;; 17. Split-Keyboard Speed-Dial (HYDRA HUD + MANAGER)
@@ -763,8 +770,8 @@ _v_: %s(my/sd-name 'left 8) 	_/_: %s(my/sd-name 'right 8)  	_p_: Lock Workspace 
   ("p" my/set-workspace-and-resume) ("t" my/set-tag-and-resume)
   ("q" my/hydra-quit) ("<escape>" my/hydra-quit) ("C-g" my/hydra-quit))
 
-;; Bind standard 'SPC b m' to our new absolute path command
-(define-key evil-normal-state-map (kbd "SPC b m") 'my/bookmark-set-absolute)
+;; Bind standard '<leader> b m' to our new absolute path command
+(evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
 
 ;; Bind the Hydra
-(define-key evil-normal-state-map (kbd "SPC a") 'hydra-speed-dial/body)
+(evil-define-key 'normal 'global (kbd "<leader> a") 'hydra-speed-dial/body)
