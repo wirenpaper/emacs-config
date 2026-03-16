@@ -234,35 +234,46 @@
 ;; 12. Setup Eshell & Eat (TUI support in Emacs)
 ;; ==========================================
 
+(defun my/eshell-in-dir (target-dir)
+  "Helper function to open Eshell in TARGET-DIR, or cd into it if already running."
+  ;; Open Eshell, forcing it to use the target directory if it's opening fresh
+  (let ((default-directory target-dir))
+    (eshell))
+  
+  ;; If Eshell was ALREADY running but in an old directory, 
+  ;; automatically CD into the new directory!
+  (when (and (eq major-mode 'eshell-mode)
+             ;; Note: Added `file-name-as-directory` to ensure safe string comparison 
+             ;; (e.g., "/dir/path/" vs "/dir/path")
+             (not (string= (file-name-as-directory (expand-file-name default-directory))
+                           (file-name-as-directory (expand-file-name target-dir)))))
+    (goto-char (point-max))
+    (insert (format "cd '%s'" target-dir))
+    (eshell-send-input)))
+
 (defun my/eshell-workspace ()
   "Open Eshell. If a workspace is locked via my-speed-dial, open it there."
   (interactive)
-  ;; Figure out the target directory (fallback to current dir if no workspace is locked)
   (let ((target-dir (if (and (boundp 'my/current-workspace-root)
                              my/current-workspace-root)
                         my/current-workspace-root
                       default-directory)))
-    
-    ;; Open Eshell, forcing it to use the target directory if it's opening fresh
-    (let ((default-directory target-dir))
-      (eshell))
-    
-    ;; If Eshell was ALREADY running but in an old directory, 
-    ;; automatically CD into the new locked workspace!
-    (when (and (eq major-mode 'eshell-mode)
-               (not (string= (expand-file-name default-directory)
-                             (expand-file-name target-dir))))
-      (goto-char (point-max))
-      (insert (format "cd '%s'" target-dir))
-      (eshell-send-input))))
+    (my/eshell-in-dir target-dir)))
+
+(defun my/eshell-current-file-dir ()
+  "Open Eshell in the directory of the currently visited file/buffer."
+  (interactive)
+  ;; `default-directory` automatically points to the current buffer's directory
+  (my/eshell-in-dir default-directory))
 
 (use-package eat
   :hook ((eshell-load . eat-eshell-visual-command-mode)
          (eshell-load . eat-eshell-mode))
   :init
-  ;; Bind <leader> e to our new smart workspace-aware function!
+  ;; <leader> e now acts as a prefix key for our Eshell commands!
   (evil-define-key 'normal 'global
-    (kbd "<leader> e") 'my/eshell-workspace)
+    (kbd "<leader> e w") 'my/eshell-workspace
+    (kbd "<leader> e f") 'my/eshell-current-file-dir)
   :config
   (evil-set-initial-state 'eat-mode 'emacs))
 
