@@ -335,17 +335,25 @@
     (with-current-buffer buf
       (erase-buffer)
       (insert (propertize hud-text 'face 'bold))
+      
+      ;; 1. Move cursor back to the top to prevent auto-scrolling
+      (goto-char (point-min))
+      
       (setq-local mode-line-format nil 
                   header-line-format nil 
                   cursor-type nil 
                   truncate-lines t
                   window-size-fixed t))
     
+    ;; Unchanged from your original code
     (setq win (display-buffer buf 
                               '((display-buffer-in-side-window) 
                                 (side . top) 
                                 (window-height . fit-window-to-buffer))))
     (set-window-dedicated-p win t)
+
+    ;; 2. Force the window view to start exactly at the top
+    (set-window-start win (point-min))
     
     (condition-case nil
         (unwind-protect
