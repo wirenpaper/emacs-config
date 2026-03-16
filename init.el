@@ -107,6 +107,9 @@
           ;; 'scroll-down' moves the text down, meaning your view goes UP.
           (scroll-down 3)))))
 
+  ;; Enable built-in OSC 52 clipboard integration for modern terminals
+  (setq xterm-extra-capabilities '(getSelection setSelection modifyOtherKeys))
+
   ;; Bind to M-j and M-k in the minibuffer
   (define-key minibuffer-local-map (kbd "M-j") 'my/scroll-completions-down)
   (define-key minibuffer-local-map (kbd "M-k") 'my/scroll-completions-up)
