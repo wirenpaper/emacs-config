@@ -1,43 +1,93 @@
+;; -*- lexical-binding: t; -*-
+(when (boundp 'native-comp-async-report-warnings-errors)
+  (setq native-comp-async-report-warnings-errors nil))
+;; Maximize memory for insanely fast startup
+(setq gc-cons-threshold (* 100 1024 1024)) ;; 100 MB
+
 ;; ==========================================
-;; 0. Keep Emacs custom UI settings out of init.el
+;; 0. Emacs Core & Custom UI Settings
 ;; ==========================================
+
+;; Always prefer newer source files over stale byte-compiled files
+(setq load-prefer-newer t)
+
 (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
 (when (file-exists-p custom-file)
   (load custom-file))
 
-;; 1. Setup package archives (MELPA)
+;; ==========================================
+;; 1. Setup Package Archives & Use-Package
+;; ==========================================
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
 
-;; 2. Setup use-package (Built into Emacs 29+)
+;; Initialize package.el
+(package-initialize)
+
+;; Bootstrap use-package
+(unless (package-installed-p 'use-package)
+  (package-refresh-contents)
+  (package-install 'use-package))
+
 (require 'use-package)
 (setq use-package-always-ensure t)
 
+;; CRITICAL: Tell the byte-compiler about use-package so it expands macros correctly
+(eval-when-compile
+  (require 'use-package))
+
 ;; ==========================================
-;; 3. Install and enable Evil & Evil-Collection
+;; Silence Byte-Compiler Warnings
+;; ==========================================
+;; Tell the compiler these functions will exist at runtime
+(declare-function eshell-send-input "esh-mode")
+(declare-function evil-org-set-key-theme "evil-org")
+(declare-function evil-org-agenda-set-keys "evil-org-agenda")
+
+;; ==========================================
+;; 2. Install and enable Evil & Evil-Collection
+;; (MUST be loaded before my-speed-dial, as my-speed-dial requires Evil!)
 ;; ==========================================
 
 (use-package evil
   :init
   (setq evil-want-integration t
-        evil-want-keybinding nil
-        evil-want-C-u-scroll t)
+	evil-want-keybinding nil
+	evil-want-C-u-scroll t)
   :config
   (evil-mode 1)
-  (evil-set-leader 'normal (kbd "SPC")))
+  (evil-set-leader 'normal (kbd "SPC"))
+  ;; Moved this global keybinding inside the Evil config
+  (evil-define-key 'normal 'global (kbd "<leader> f f") 'find-file))
 
 (use-package evil-collection
   :after evil
   :config
   (evil-collection-init))
 
-;; 4. general settings
+;; ==========================================
+;; 3. Load Custom Lisp Path & My-Speed-Dial
+;; ==========================================
+;; We load this EARLY because later functions (like Eshell) rely on variables
+;; defined inside my-speed-dial.el!
+(add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
+(require 'my-speed-dial)
+
+;; ==========================================
+;; 4. General UI & System Settings
+;; ==========================================
+
 (menu-bar-mode -1)      ;; Hide the top menu bar
 (tool-bar-mode -1)      ;; Hide the icon tool bar
 (scroll-bar-mode -1)    ;; Hide the side scroll bars
 ;; (setq inhibit-startup-screen t) ;; Skip the splash screen
 
-(evil-define-key 'normal 'global (kbd "<leader> f f") 'find-file)
+;; get rid of annoying bell sound
+(setq ring-bell-function 'ignore)
+(setq visible-bell t)
+
+;; remember file position
+(save-place-mode 1)
 
 ;; ==========================================
 ;; Typography / Font Settings
@@ -46,51 +96,30 @@
 (let ((my-english-font "CMU Typewriter Text")
       (my-arabic-font  "Scheherazade New"))
 
-  ;; 1. Set the main UI font (English/Code)
   (when (member my-english-font (font-family-list))
     (set-face-attribute 'default nil :font my-english-font :height 200))
 
-  ;; 2. Set the fallback font specifically for the Arabic script
   (when (member my-arabic-font (font-family-list))
-    ;; Automatically scale the Arabic font up by 35% so it matches the English font
     (add-to-list 'face-font-rescale-alist (cons my-arabic-font 1.35))
-    ;; Assign the font to Emacs' Arabic fontset
     (set-fontset-font t 'arabic (font-spec :family my-arabic-font))))
 
 ;; ==========================================
 ;; Fix RTL/Arabic Cursor Movement in Evil Mode
 ;; ==========================================
 
-;; 1. Tell Emacs to strictly use visual cursor movement globally
 (setq visual-order-cursor-movement t)
-
-;; 2. Force Evil mode to respect visual movement
 (with-eval-after-load 'evil
-  ;; Fix the Arrow Keys in Normal/Visual mode
   (define-key evil-motion-state-map (kbd "<left>") 'left-char)
   (define-key evil-motion-state-map (kbd "<right>") 'right-char)
-  
-  ;; PRO-TIP: You can also fix 'h' and 'l' so your home-row keys 
-  ;; traverse Arabic visually just like the arrow keys!
   (define-key evil-motion-state-map (kbd "h") 'left-char)
   (define-key evil-motion-state-map (kbd "l") 'right-char))
 
-;; reload emacs
-(defun my/reload-config ()
-  "Reload your Emacs init.el file instantly."
-  (interactive)
-  (load-file user-init-file)
-  (message "Config successfully reloaded!"))
-(evil-define-key 'normal 'global (kbd "<leader> h r r") 'my/reload-config)
-
 ;; ==========================================
-;; Make ESC quit prompts and cancel chords (The Vim Way)
+;; Make ESC quit prompts and cancel chords
 ;; ==========================================
 
-;; I. Global: Make ESC quit prompts, close extraneous windows, etc.
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
-;; II. Minibuffer: Make ESC abort M-x, Evil command line (:), searches, etc.
 (defun my/minibuffer-keyboard-quit ()
   "Abort recursive edit. In Delete Selection mode, this is undefined."
   (interactive)
@@ -102,41 +131,68 @@
 (define-key minibuffer-local-must-match-map (kbd "<escape>") 'my/minibuffer-keyboard-quit)
 (define-key minibuffer-local-isearch-map    (kbd "<escape>") 'my/minibuffer-keyboard-quit)
 
-;; III. Prefix Keys: Make ESC safely abort C-x, C-c, and C-h without getting stuck
-(define-key ctl-x-map         (kbd "<escape>") 'keyboard-quit)  ; Cancels C-x
-(define-key mode-specific-map (kbd "<escape>") 'keyboard-quit)  ; Cancels C-c
-(define-key help-map          (kbd "<escape>") 'keyboard-quit)  ; Cancels C-h
-
-;; get rid of annoying bell sound
-(setq ring-bell-function 'ignore)
-(setq visible-bell t)
-
-;; remember file position
-(save-place-mode 1)
+(define-key ctl-x-map         (kbd "<escape>") 'keyboard-quit)
+(define-key mode-specific-map (kbd "<escape>") 'keyboard-quit)
+(define-key help-map          (kbd "<escape>") 'keyboard-quit)
 
 ;; ==========================================
-;; Relative Line Numbers (The Vim Way)
+;; Relative Line Numbers
 ;; ==========================================
 
-;; Set line numbers to relative
 (setq display-line-numbers-type 'relative)
-
-;; Enable line numbers globally
 (global-display-line-numbers-mode 1)
 
-;; PRO-TIP: Disable line numbers in certain modes (like terminals)
-;; Having line numbers inside Eshell or Eat (like when running htop) breaks the UI!
 (dolist (mode '(eshell-mode-hook
-		 eat-mode-hook
-		 term-mode-hook
-		 shell-mode-hook))
+                eat-mode-hook
+                term-mode-hook
+                shell-mode-hook))
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
 ;; ==========================================
-;; 5. Setup Org-Mode & Evil-Org
+;; Reload Config Function
+;; ==========================================
+(defun my/reload-config ()
+  "Reload your Emacs init.el file instantly."
+  (interactive)
+  (load-file user-init-file)
+  (message "Config successfully reloaded!"))
+
+(with-eval-after-load 'evil
+  (evil-define-key 'normal 'global (kbd "<leader> h r r") 'my/reload-config))
+
+(defun my/compile-config ()
+  "Compile my-speed-dial.el first, then init.el to Machine Code (if supported)."
+  (interactive)
+  (let ((speed-dial (expand-file-name "lisp/my-speed-dial.el" user-emacs-directory))
+        (init       (expand-file-name "init.el" user-emacs-directory))
+        (use-native (and (fboundp 'native-comp-available-p) 
+                         (native-comp-available-p))))
+    
+    (if use-native
+        (message "🚀 Native Compilation is ON. Compiling to machine code...")
+      (message "⚙️ Native Compilation not found. Falling back to byte-compilation..."))
+
+    ;; 1. Compile my-speed-dial.el
+    (when (file-exists-p speed-dial)
+      (if use-native
+          (native-compile speed-dial)
+        (byte-compile-file speed-dial)))
+      
+    ;; 2. Compile init.el
+    (when (file-exists-p init)
+      (if use-native
+          (native-compile init)
+        (byte-compile-file init)))
+      
+    (message "✨ Config successfully compiled! Restart Emacs to experience the speed.")))
+
+(with-eval-after-load 'evil
+  (evil-define-key 'normal 'global (kbd "<leader> h c c") 'my/compile-config))
+
+;; ==========================================
+;; 5. Setup Org-Mode Ecosystem
 ;; ==========================================
 
-;; Load built-in org-mode
 (require 'org)
 
 (use-package evil-org
@@ -146,11 +202,8 @@
   (evil-org-agenda-set-keys)
   (evil-org-set-key-theme '(navigation insert textobjects additional calendar)))
 
-;; ==========================================
-;; 6. Setup Org-Roam
-;; ==========================================
-
-(setq org-roam-directory (expand-file-name "~/org-roam"))
+;; Set base directory first so other packages can use it
+(defvar org-roam-directory (expand-file-name "~/org-roam"))
 
 (use-package org-roam
   :config
@@ -164,11 +217,6 @@
     (kbd "<leader> n i") 'org-roam-node-insert
     (kbd "<leader> n s") 'org-roam-db-sync))
 
-;; ==========================================
-;; 7. Org-Roam-UI (The Obsidian-style Graph)
-;; ==========================================
-
-;; Install org-roam-ui
 (use-package org-roam-ui
   :custom
   (org-roam-ui-sync-theme t)
@@ -179,13 +227,8 @@
   (evil-define-key 'normal 'global
     (kbd "<leader> n g") 'org-roam-ui-mode))
 
-;; Make the Space key type a normal space in search menus
-;; instead of trying to autocomplete
+;; Minibuffer SPC fix
 (define-key minibuffer-local-completion-map (kbd "SPC") 'self-insert-command)
-
-;; ==========================================
-;; 8. Setup Org-Transclusion
-;; ==========================================
 
 (use-package org-transclusion
   :config
@@ -193,22 +236,14 @@
     (kbd "<leader> n t") 'org-transclusion-mode
     (kbd "<leader> n a") 'org-transclusion-add))
 
-;; ==========================================
-;; 9. Setup Org-Download
-;; ==========================================
-
 (use-package org-download
   :hook ((dired-mode . org-download-enable)
          (org-mode . org-download-enable))
   :custom
   (org-download-image-dir (concat org-roam-directory "/images")))
 
-;; ==========================================
-;; 10. Setup Org-Capture
-;; ==========================================
-
 (use-package org-capture
-  :ensure nil ; It's built into Emacs!
+  :ensure nil
   :custom
   (org-default-notes-file (concat org-roam-directory "/inbox.org"))
   (org-capture-templates
@@ -217,10 +252,6 @@
   :config
   (evil-define-key 'normal 'global
     (kbd "<leader> n c") 'org-capture))
-
-;; ==========================================
-;; 11. Setup Org-Appear
-;; ==========================================
 
 (use-package org-appear
   :hook (org-mode . org-appear-mode)
@@ -231,20 +262,14 @@
   (org-appear-autosubmarkers t))
 
 ;; ==========================================
-;; 12. Setup Eshell & Eat (TUI support in Emacs)
+;; 6. Setup Eshell & Eat 
 ;; ==========================================
 
 (defun my/eshell-in-dir (target-dir)
   "Helper function to open Eshell in TARGET-DIR, or cd into it if already running."
-  ;; Open Eshell, forcing it to use the target directory if it's opening fresh
   (let ((default-directory target-dir))
     (eshell))
-  
-  ;; If Eshell was ALREADY running but in an old directory, 
-  ;; automatically CD into the new directory!
   (when (and (eq major-mode 'eshell-mode)
-             ;; Note: Added `file-name-as-directory` to ensure safe string comparison 
-             ;; (e.g., "/dir/path/" vs "/dir/path")
              (not (string= (file-name-as-directory (expand-file-name default-directory))
                            (file-name-as-directory (expand-file-name target-dir)))))
     (goto-char (point-max))
@@ -263,97 +288,65 @@
 (defun my/eshell-current-file-dir ()
   "Open Eshell in the directory of the currently visited file/buffer."
   (interactive)
-  ;; `default-directory` automatically points to the current buffer's directory
   (my/eshell-in-dir default-directory))
 
 (use-package eat
   :hook ((eshell-load . eat-eshell-visual-command-mode)
          (eshell-load . eat-eshell-mode))
   :init
-  ;; <leader> e now acts as a prefix key for our Eshell commands!
-  (evil-define-key 'normal 'global
-    (kbd "<leader> e w") 'my/eshell-workspace
-    (kbd "<leader> e f") 'my/eshell-current-file-dir)
+  (with-eval-after-load 'evil
+    (evil-define-key 'normal 'global
+      (kbd "<leader> e w") 'my/eshell-workspace
+      (kbd "<leader> e f") 'my/eshell-current-file-dir))
   :config
   (evil-set-initial-state 'eat-mode 'emacs))
 
-;; ==========================================
-;; ESHELL / EAT TERMINAL FIXES
-;; ==========================================
-
 (defun my/eshell-clear-buffer ()
-  "Instantly clear the Eshell buffer, like 'clear' in bash."
+  "Instantly clear the Eshell buffer, like `clear' in bash."
   (interactive)
   (let ((inhibit-read-only t))
     (erase-buffer)
     (eshell-send-input)))
 
-;; Hook this to Eshell so C-l always clears with one press
 (add-hook 'eshell-mode-hook
-	  (lambda ()
-	    (local-set-key (kbd "C-l") 'my/eshell-clear-buffer)))
+          (lambda ()
+            (local-set-key (kbd "C-l") 'my/eshell-clear-buffer)))
 
 ;; ==========================================
-;; 13. Setup Standard Bookmarks
+;; 7. Setup Standard Bookmarks
 ;; ==========================================
 
 (require 'bookmark)
 
-;; Automatically save bookmarks to your bookmark file whenever one is made/changed
 (setq bookmark-save-flag nil)
 (add-hook 'kill-emacs-hook #'bookmark-save)
 
-;; -- Evil Keybindings for Bookmarks --
-;; We will use "<leader> b" as the prefix for all Bookmark commands.
+(with-eval-after-load 'evil
+  (evil-define-key 'normal 'global (kbd "<leader> b l") 'bookmark-bmenu-list)
+  (evil-define-key 'normal 'global (kbd "<leader> b s") 'bookmark-set)
+  (evil-define-key 'normal 'global (kbd "<leader> b j") 'bookmark-jump))
 
-;; <leader> b l: Open the standard Bookmark Menu (bmenu)
-(evil-define-key 'normal 'global (kbd "<leader> b l") 'bookmark-bmenu-list)
+(with-eval-after-load 'evil
+  (evil-set-initial-state 'bookmark-bmenu-mode 'emacs))
 
-;; <leader> b s: Set/Create a standard bookmark at your current cursor position
-(evil-define-key 'normal 'global (kbd "<leader> b s") 'bookmark-set)
-
-;; <leader> b j: Jump to a bookmark instantly via the minibuffer
-(evil-define-key 'normal 'global (kbd "<leader> b j") 'bookmark-jump)
-
-;; ==========================================
-;; BOOKMARK BMENU EVIL INTEGRATION
-;; ==========================================
-
-;; Start the standard bookmark menu in Emacs state. 
-;; This prevents Evil's normal mode from overriding the menu keys.
-(evil-set-initial-state 'bookmark-bmenu-mode 'emacs)
-
-;; But we still want Vim-style navigation! 
-;; We will map 'j' and 'k' to move up and down, and 'ESC' to close the menu.
 (add-hook 'bookmark-bmenu-mode-hook
-	  (lambda ()
-	    (define-key bookmark-bmenu-mode-map (kbd "j") 'next-line)
-	    (define-key bookmark-bmenu-mode-map (kbd "k") 'previous-line)
-	    (define-key bookmark-bmenu-mode-map (kbd "<escape>") 'quit-window)))
+          (lambda ()
+            (define-key bookmark-bmenu-mode-map (kbd "j") 'next-line)
+            (define-key bookmark-bmenu-mode-map (kbd "k") 'previous-line)
+            (define-key bookmark-bmenu-mode-map (kbd "<escape>") 'quit-window)))
 
 ;; ==========================================
-;; 14. Add lisp directory to Emacs' load path
-;; ==========================================
-(add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
-
-;; ==========================================
-;; 15. load your custom speed dial system
-;; ==========================================
-(require 'my-speed-dial)
-
-;; ==========================================
-;; 16. Install and Setup ef-themes
+;; 8. Install and Setup ef-themes
 ;; ==========================================
 
 (use-package ef-themes
   :config
-  ;; Load your favorite theme by default on startup. 
-  ;; (Change 'ef-summer' to whatever theme you end up liking best!)
   (load-theme 'ef-summer t)
-
-  ;; Evil keybindings for managing themes
   (evil-define-key 'normal 'global
-    ;; Space t s -> Select a theme from a menu
     (kbd "<leader> t s") 'ef-themes-select
-    ;; Space t t -> Toggle between a light and dark theme
     (kbd "<leader> t t") 'ef-themes-toggle))
+
+;; Reset memory back to normal after startup so Emacs doesn't freeze during normal use
+(add-hook 'emacs-startup-hook
+          (lambda ()
+            (setq gc-cons-threshold (* 32 1024 1024)))) ;; 32 MB

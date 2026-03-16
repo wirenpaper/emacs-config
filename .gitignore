@@ -15,3 +15,4 @@ transient/
 \#init.el\#
 custom.el
 custom.el~
+*.elc

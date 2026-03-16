@@ -1,7 +1,11 @@
-;;; my-speed-dial.el --- Custom workspace speed dial -*- lexical-binding: t -*-
+;;; my-speed-dial.el --- Custom workspace speed dial -*- lexical-binding: t; byte-compile-warnings: (not docstrings redefine) -*-
 
 (require 'bookmark)
 (require 'cl-lib)
+
+;; Let the compiler know about use-package
+(eval-when-compile
+  (require 'use-package))
 
 ;; Ensure required packages are loaded for macros
 (use-package evil :ensure t)
@@ -24,7 +28,7 @@
   "The currently active dynamic tag (Right Hand).")
 
 (defvar my/speed-dial-mode 'normal 
-  "Can be 'normal, 'pick, 'drop, 'tag, or 'untag")
+  "Can be `normal', `pick', `drop', `tag', or `untag'.")
 
 (defvar my/pending-move-bm nil 
   "Bookmark currently being moved.")
@@ -475,31 +479,52 @@
 (defhydra hydra-speed-dial (:color blue :hint nil)
   "
 ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
-^TAG    ^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond ((eq my/speed-dial-mode 'pick) \"\n\n  >>> [MOVE MODE] PRESS THE KEY OF THE BOOKMARK YOU WANT TO PICK UP <<<\") ((eq my/speed-dial-mode 'drop) (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\" (if (and my/pending-move-bm (file-name-absolute-p my/pending-move-bm)) (file-name-nondirectory my/pending-move-bm) my/pending-move-bm))) ((eq my/speed-dial-mode 'untag) \"\n\n  >>> [UNTAG MODE] PRESS THE KEY OF THE SLOT YOU WANT TO UNTAG <<<\") ((eq my/speed-dial-mode 'tag) (if my/pending-tag-target (format \"\n\n  >>> [TAG MODE] READY TO PIN: [%s] ... PRESS A SLOT KEY <<<\" (file-name-nondirectory my/pending-tag-target)) \"\n\n  >>> [TAG MODE] PRESS A SLOT KEY TO TAG AND ASSIGN THE CURRENT FILE <<<\")) (t \"\"))
---------------------------------------------------------------------------------------------------------------
-_a_: %s(my/sd-name 'left 1) 	_j_: %s(my/sd-name 'right 1)  	_T_: Tag Current File (Active)
-_s_: %s(my/sd-name 'left 2) 	_k_: %s(my/sd-name 'right 2)  	_F_: Find & Tag Background File
-_d_: %s(my/sd-name 'left 3) 	_l_: %s(my/sd-name 'right 3)  	_U_: Untag a Slot
-_f_: %s(my/sd-name 'left 4) 	_;_: %s(my/sd-name 'right 4)  	_M_: Toggle Move Mode       
-_z_: %s(my/sd-name 'left 5) 	_m_: %s(my/sd-name 'right 5)  	_C_: Create New Tag
-_x_: %s(my/sd-name 'left 6) 	_,_: %s(my/sd-name 'right 6)  	_W_: Wipe Tag Completely
-_c_: %s(my/sd-name 'left 7) 	_._: %s(my/sd-name 'right 7)  	_X_: Nuke Workspace 
-_v_: %s(my/sd-name 'left 8) 	_/_: %s(my/sd-name 'right 8)  	_p_: Lock Workspace  _t_: Lock Tag  _q_: Quit
+^TAG    ^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond
+  ((eq my/speed-dial-mode 'pick)
+   \"\n\n  >>> [MOVE MODE] PRESS BOOKMARK KEY TO PICK UP <<<\")
+  ((eq my/speed-dial-mode 'drop)
+   (format \"\n\n  >>>[MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\"
+           (if (and my/pending-move-bm (file-name-absolute-p my/pending-move-bm))
+               (file-name-nondirectory my/pending-move-bm)
+             my/pending-move-bm)))
+  ((eq my/speed-dial-mode 'untag)
+   \"\n\n  >>> [UNTAG MODE] PRESS SLOT KEY TO UNTAG <<<\")
+  ((eq my/speed-dial-mode 'tag)
+   (if my/pending-tag-target
+       (format \"\n\n  >>> [TAG MODE] READY TO PIN: [%s] ... PRESS A SLOT KEY <<<\"
+               (file-name-nondirectory my/pending-tag-target))
+     \"\n\n  >>>[TAG MODE] PRESS SLOT KEY TO TAG CURRENT FILE <<<\"))
+  (t \"\"))
+-----------------------------------------------------------------------------------------------------
+_a_: %s(my/sd-name 'left 1)  _j_: %s(my/sd-name 'right 1)  _T_: Tag File
+_s_: %s(my/sd-name 'left 2)  _k_: %s(my/sd-name 'right 2)  _F_: Find & Tag
+_d_: %s(my/sd-name 'left 3)  _l_: %s(my/sd-name 'right 3)  _U_: Untag Slot
+_f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Toggle Move
+_z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _C_: Create Tag
+_x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  _W_: Wipe Tag
+_c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _X_: Nuke Workspace
+_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspc
+                                                                                _t_: Lock Tag                _q_: Quit HUD 
   "
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
   ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
   ("z" (my/speed-dial-jump "global" 5)) ("x" (my/speed-dial-jump "global" 6))
   ("c" (my/speed-dial-jump "global" 7)) ("v" (my/speed-dial-jump "global" 8))
 
-  ("j" (my/speed-dial-jump my/current-speed-dial-tag 1)) ("k" (my/speed-dial-jump my/current-speed-dial-tag 2))
-  ("l" (my/speed-dial-jump my/current-speed-dial-tag 3)) (";" (my/speed-dial-jump my/current-speed-dial-tag 4))
-  ("m" (my/speed-dial-jump my/current-speed-dial-tag 5)) ("," (my/speed-dial-jump my/current-speed-dial-tag 6))
-  ("." (my/speed-dial-jump my/current-speed-dial-tag 7)) ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
+  ("j" (my/speed-dial-jump my/current-speed-dial-tag 1))
+  ("k" (my/speed-dial-jump my/current-speed-dial-tag 2))
+  ("l" (my/speed-dial-jump my/current-speed-dial-tag 3))
+  (";" (my/speed-dial-jump my/current-speed-dial-tag 4))
+  ("m" (my/speed-dial-jump my/current-speed-dial-tag 5))
+  ("," (my/speed-dial-jump my/current-speed-dial-tag 6))
+  ("." (my/speed-dial-jump my/current-speed-dial-tag 7))
+  ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
 
-  ("T" my/hydra-start-tag) ("F" my/hydra-find-and-tag) ("U" my/hydra-start-untag) ("M" my/hydra-start-move)
-  ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag) ("X" my/hydra-wipe-workspace)    
-  ("p" my/set-workspace-and-resume) ("t" my/set-tag-and-resume)
-  ("q" my/hydra-quit) ("<escape>" my/hydra-quit) ("C-g" my/hydra-quit))
+  ("T" my/hydra-start-tag) ("F" my/hydra-find-and-tag) ("U" my/hydra-start-untag)
+  ("M" my/hydra-start-move) ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag)
+  ("X" my/hydra-wipe-workspace) ("p" my/set-workspace-and-resume)
+  ("t" my/set-tag-and-resume) ("q" my/hydra-quit) ("<escape>" my/hydra-quit)
+  ("C-g" my/hydra-quit))
 
 ;; ==========================================
 ;; 7. KEYBINDINGS
