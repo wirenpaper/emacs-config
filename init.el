@@ -86,6 +86,37 @@
 (setq ring-bell-function 'ignore)
 (setq visible-bell t)
 
+;; scrolling find section
+(with-eval-after-load 'minibuffer
+  
+  (defun my/scroll-completions-down ()
+    "Scroll the *Completions* window down without changing selection."
+    (interactive)
+    (let ((win (get-buffer-window "*Completions*")))
+      (when win
+        (with-selected-window win
+          ;; In Emacs, 'scroll-up' moves the text up, meaning your view goes DOWN.
+          (scroll-up 3)))))
+
+  (defun my/scroll-completions-up ()
+    "Scroll the *Completions* window up without changing selection."
+    (interactive)
+    (let ((win (get-buffer-window "*Completions*")))
+      (when win
+        (with-selected-window win
+          ;; 'scroll-down' moves the text down, meaning your view goes UP.
+          (scroll-down 3)))))
+
+  ;; Bind to M-j and M-k in the minibuffer
+  (define-key minibuffer-local-map (kbd "M-j") 'my/scroll-completions-down)
+  (define-key minibuffer-local-map (kbd "M-k") 'my/scroll-completions-up)
+  
+  (define-key minibuffer-local-completion-map (kbd "M-j") 'my/scroll-completions-down)
+  (define-key minibuffer-local-completion-map (kbd "M-k") 'my/scroll-completions-up)
+  
+  (define-key minibuffer-local-filename-completion-map (kbd "M-j") 'my/scroll-completions-down)
+  (define-key minibuffer-local-filename-completion-map (kbd "M-k") 'my/scroll-completions-up))
+
 ;; remember file position
 (save-place-mode 1)
 
