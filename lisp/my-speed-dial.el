@@ -511,8 +511,7 @@ _f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Toggle Move
 _z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _C_: Create Tag
 _x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  _W_: Wipe Tag
 _c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _X_: Nuke Workspace
-_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspc
-                                                                                _t_: Lock Tag                _q_: Quit HUD 
+_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspc | _t_: Lock Tag | _q_: Quit HUD 
   "
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
   ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
