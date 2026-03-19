@@ -493,7 +493,7 @@
   (hydra-speed-dial/body))
 
 (defun my/hydra-wipe-workspace ()
-  "Remove the workspace. If bookmarks are shared, untag them. If strictly local, delete them."
+  "Remove all bookmarks from the workspace but KEEP the workspace locked."
   (interactive)
   (bookmark-maybe-load-default-file)
   (let* ((root (my/get-workspace))
@@ -502,7 +502,7 @@
                        bookmark-alist)))
     (if (not project-bms)
         (message "Workspace is already empty! No bookmarks to remove.")
-      (when (y-or-n-p (format "DANGER: Remove workspace '%s' (%d files)? " 
+      (when (y-or-n-p (format "DANGER: Wipe all contents of workspace '%s' (%d files)? " 
                               (file-name-nondirectory (directory-file-name root))
                               (length project-bms)))
         (dolist (bm project-bms)
@@ -523,10 +523,11 @@
             (bookmark-delete state-bm)
             (bookmark-save)))
         
-        (setq my/current-workspace-root nil)
+        ;; CRITICAL FIX: We NO LONGER set my/current-workspace-root to nil.
+        ;; We only clear the tag because all tags were just wiped.
         (setq my/current-speed-dial-tag nil)
-        (my/save-global-workspace-state nil)  ;; <--- NEW: Clear global memory
-        (message "Workspace clean successfully!"))))
+        
+        (message "Workspace contents wiped successfully!"))))
   (hydra-speed-dial/body))
 
 (defun my/set-workspace-and-resume () 
