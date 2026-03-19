@@ -106,12 +106,32 @@
   (let* ((bm-name (format "sd-workspace-state|%s" root))
          (existing (assoc bm-name bookmark-alist))
          (alist (if existing (cdr existing) nil)))
-    ;; Safely update the active-tag property
     (setf (alist-get 'active-tag alist) tag)
-    ;; Using `bookmark-store` properly formats the bookmark and, most importantly,
-    ;; increments `bookmark-alist-modification-count` so Emacs actually flushes it to disk!
     (bookmark-store bm-name alist nil)
     (bookmark-save)))
+
+;; NEW: Save globally active workspace
+(defun my/save-global-workspace-state (root)
+  "Save the globally active workspace so it restores on Emacs startup."
+  (let* ((bm-name "sd-global-state")
+         (existing (assoc bm-name bookmark-alist))
+         (alist (if existing (cdr existing) nil)))
+    (setf (alist-get 'last-workspace alist) root)
+    (bookmark-store bm-name alist nil)
+    (bookmark-save)))
+
+;; NEW: Load globally active workspace
+(defun my/load-global-workspace-state ()
+  "Load the last active workspace on Emacs startup."
+  (bookmark-maybe-load-default-file)
+  (let* ((bm-name "sd-global-state")
+         (existing (assoc bm-name bookmark-alist)))
+    (when existing
+      (let ((root (bookmark-prop-get bm-name 'last-workspace)))
+        ;; Only load it if the directory hasn't been deleted from the hard drive
+        (when (and root (file-exists-p root))
+          (setq my/current-workspace-root root)
+          (setq my/current-speed-dial-tag (my/get-saved-workspace-tag root)))))))
 
 ;; ==========================================
 ;; 3. WORKSPACE & TAGGING LOGIC
@@ -126,6 +146,7 @@
          (saved-tag (my/get-saved-workspace-tag root)))
     (setq my/current-workspace-root root)
     (setq my/current-speed-dial-tag saved-tag) ;; Auto-restore tag for this workspace
+    (my/save-global-workspace-state root)      ;; <--- NEW: Save for next startup
     (if saved-tag
         (message "Workspace locked to: %s (Restored tag: [%s])" root saved-tag)
       (message "Workspace locked to: %s" root))))
@@ -493,6 +514,7 @@
         
         (setq my/current-workspace-root nil)
         (setq my/current-speed-dial-tag nil)
+        (my/save-global-workspace-state nil)  ;; <--- NEW: Clear global memory
         (message "Workspace clean successfully!"))))
   (hydra-speed-dial/body))
 
@@ -560,7 +582,12 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspc | _
   ("C-g" my/hydra-quit))
 
 ;; ==========================================
-;; 7. KEYBINDINGS
+;; 7. Auto-load Last Workspace
+;; ==========================================
+(my/load-global-workspace-state)
+
+;; ==========================================
+;; 8. KEYBINDINGS
 ;; ==========================================
 
 ;; 1. The main entry point to open the speed-dial HUD
