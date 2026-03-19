@@ -43,6 +43,11 @@
 (declare-function eshell-send-input "esh-mode")
 (declare-function evil-org-set-key-theme "evil-org")
 (declare-function evil-org-agenda-set-keys "evil-org-agenda")
+;; Fix for PDF Tools compiler warnings:
+(declare-function pdf-info-outline "pdf-info")
+(declare-function image-mode-window-get "image-mode")
+;; Fix for Eglot/JSONRPC warnings:
+(declare-function jsonrpc--log-event "jsonrpc")
 
 ;; ==========================================
 ;; 2. Install and enable Evil & Evil-Collection
@@ -383,4 +388,222 @@
 ;; Reset memory back to normal after startup so Emacs doesn't freeze during normal use
 (add-hook 'emacs-startup-hook
           (lambda ()
-            (setq gc-cons-threshold (* 32 1024 1024)))) ;; 32 MB
+            (setq gc-cons-threshold (* 100 1024 1024)))) ;; 100 MB
+
+;; ==========================================
+;; 9. Elfeed & Elfeed-Org
+;; ==========================================
+
+(use-package elfeed
+  :custom
+  (elfeed-use-curl t)
+  (elfeed-search-filter "@6-months-ago ")
+  
+  :config
+  ;; ----------------------------------------------------
+  ;; 🎬 THE "PLAY YOUTUBE IN MPV" FUNCTION
+  ;; (Kept this here so you can still press 'v' to watch videos!)
+  ;; ----------------------------------------------------
+  (defun my/elfeed-play-with-mpv ()
+    "Play the current Elfeed entry's video link in mpv."
+    (interactive)
+    (let ((link (if (derived-mode-p 'elfeed-search-mode)
+                    (elfeed-entry-link (elfeed-search-selected :ignore-region))
+                  (elfeed-entry-link elfeed-show-entry))))
+      (if link
+          (progn
+            (message "🚀 Launching mpv for: %s" link)
+            (start-process "elfeed-mpv" nil "mpv" link))
+        (message "❌ No link found!"))))
+
+  (with-eval-after-load 'evil
+    (evil-define-key 'normal elfeed-search-mode-map (kbd "v") 'my/elfeed-play-with-mpv)
+    (evil-define-key 'normal elfeed-show-mode-map (kbd "v") 'my/elfeed-play-with-mpv)))
+
+;; Install and setup elfeed-org
+(use-package elfeed-org
+  :after elfeed
+  :config
+  ;; Initialize elfeed-org
+  (elfeed-org)
+  ;; Tell it where to find your "folders" file (we will create this in Step 2)
+  (setq rmh-elfeed-org-files (list (expand-file-name "elfeed.org" user-emacs-directory))))
+
+;; ==========================================
+;; 10. PDF Tools (The ultimate PDF viewer)
+;; ==========================================
+
+;; Tell Emacs not to warn us about large files unless they are over 50MB
+(setq large-file-warning-threshold (* 50 1024 1024))
+
+(use-package pdf-tools
+  ;; This line is the magic key: it forces Emacs to load this package for ALL .pdf files
+  :mode ("\\.pdf\\'" . pdf-view-mode) 
+  :hook (pdf-view-mode . pdf-view-midnight-minor-mode) ;; Optional: Dark mode for PDFs!
+  :config
+  ;; Install and initialize the package
+  (pdf-tools-install)
+  
+  ;; FIX 1: Automatically turn off line numbers when reading a PDF to stop the warnings
+  (add-hook 'pdf-view-mode-hook (lambda () (display-line-numbers-mode -1)))
+  
+  ;; FIX 2 (Part 1): Turn on Emacs' built-in memory for where your cursor was
+  (save-place-mode 1))
+
+;; FIX 2 (Part 2): The add-on that tells the memory mode how to handle PDFs
+(use-package saveplace-pdf-view
+  :after pdf-tools)
+
+;;How to fix it if it ever breaks
+;;If a system update ever breaks your PDF viewer, do not panic! You do not need to rewrite your config.
+;;All you have to do is tell Emacs to rebuild the engine against your new system libraries:
+;;Open Emacs.
+;;Press Alt + x (or SPC :).
+;;Type pdf-tools-install and hit Enter.
+
+;; ==========================================
+;; Show Current PDF Chapter Hierarchy (Breadcrumbs)
+;; ==========================================
+
+;; Local memory to store the chapter so we don't slow Emacs down
+(defvar-local my-pdf-chapter-cache (cons 0 ""))
+
+(defun my-pdf-update-header-line ()
+  "Find current chapter hierarchy and show it in the top header line."
+  (ignore-errors
+    (when (eq major-mode 'pdf-view-mode)
+      (let ((current-page (pdf-view-current-page)))
+        ;; Only recalculate if we actually turned a page
+        (unless (eq current-page (car my-pdf-chapter-cache))
+          (let ((best-title "")
+                ;; Ask pdf-tools server for the metadata
+                (outline (pdf-info-outline))
+                ;; Create a temporary array to hold the path (up to 20 levels deep)
+                (path (make-vector 20 nil))
+                (best-path-list nil)) 
+            
+            (when outline
+              (dolist (node outline)
+                (let* ((node-page (alist-get 'page node))
+                       (node-depth (alist-get 'depth node))
+                       (raw-title (alist-get 'title node))
+                       ;; Clean up title (removes accidental newlines/tabs from PDF metadata)
+                       (node-title (if (stringp raw-title)
+                                       (replace-regexp-in-string "[ \t\n\r]+" " " raw-title)
+                                     "")))
+                  
+                  ;; If we have passed (or are on) the page of this section
+                  (when (and (numberp node-page) 
+                             (<= node-page current-page)
+                             (numberp node-depth)
+                             (> node-depth 0))
+                    
+                    ;; Expand memory if the PDF has insanely deep nesting (> 20 levels)
+                    (when (>= node-depth (length path))
+                      (setq path (vconcat path (make-vector node-depth nil))))
+                    
+                    ;; Insert the title at its exact depth level
+                    (aset path (1- node-depth) node-title)
+                    
+                    ;; Crucial: Clear out any deeper subsections left over from previous chapters
+                    (let ((i node-depth))
+                      (while (< i (length path))
+                        (aset path i nil)
+                        (setq i (1+ i))))
+                    
+                    ;; Take a snapshot of the valid path so far
+                    (setq best-path-list (append path nil)))))
+              
+              ;; Clean up empty levels and combine them with " -> "
+              (when best-path-list
+                (setq best-title 
+                      (mapconcat #'identity 
+                                 (delq nil (mapcar (lambda (x) (and (stringp x) (not (string-empty-p x)) x)) 
+                                                   best-path-list)) 
+                                 " ➔ ")))) ;; Change " ➔ " to " -> " if your font doesn't support the arrow!
+            
+            ;; Save to memory cache
+            (setq my-pdf-chapter-cache (cons current-page best-title))))
+        
+        ;; Update the top bar (header-line)
+        (setq header-line-format
+              (if (string-empty-p (cdr my-pdf-chapter-cache))
+                  nil ;; Hide the bar if no metadata exists for this page
+                (format "  📖 %s " (cdr my-pdf-chapter-cache))))))))
+
+;; Attach this function to run automatically every time you flip a page
+(add-hook 'pdf-view-mode-hook
+          (lambda ()
+            (add-hook 'pdf-view-after-change-page-hook #'my-pdf-update-header-line nil t)
+            (my-pdf-update-header-line)))
+
+;; Bind "O" in Evil normal mode to open the PDF outline
+(with-eval-after-load 'pdf-tools
+  (with-eval-after-load 'evil
+    (evil-define-key 'normal pdf-view-mode-map (kbd "O") #'pdf-outline)))
+
+;; ==========================================
+;; 11. C/C++ LSP & Autocompletion (Clangd)
+;; ==========================================
+
+;; Tell Emacs that .cppm files are C++ files so they get colors and LSP
+(add-to-list 'auto-mode-alist '("\\.cppm\\'" . c++-mode))
+
+;; 1. Setup Corfu for modern, lightweight auto-completion popups
+(use-package corfu
+  :custom
+  (corfu-auto t)
+  (corfu-auto-delay 0.1)
+  (corfu-auto-prefix 2)
+  (corfu-cycle t)
+  (corfu-quit-no-match t)
+  :init
+  (global-corfu-mode)
+  :config
+  (with-eval-after-load 'evil
+    (define-key corfu-map (kbd "C-j") 'corfu-next)
+    (define-key corfu-map (kbd "C-k") 'corfu-previous)))
+
+;; 2. Setup Eglot (The built-in LSP client)
+(use-package eglot
+  :ensure nil
+  :hook ((c-mode . eglot-ensure)
+         (c++-mode . eglot-ensure))
+  :config
+  (setq eglot-events-buffer-config '(:size 0 :format short)) 
+  
+  (with-eval-after-load 'jsonrpc
+    (fset #'jsonrpc--log-event #'ignore))
+
+  ;; CRITICAL: Tell Clangd to enable C++ modules!
+  (add-to-list 'eglot-server-programs
+               '((c++-mode c-mode)
+                 "clangd"
+                 "--experimental-modules-support"))
+  
+  (with-eval-after-load 'evil
+    (evil-define-key 'normal eglot-mode-map
+      (kbd "<leader> c r") 'eglot-rename
+      (kbd "<leader> c a") 'eglot-code-actions
+      (kbd "<leader> c f") 'eglot-format-buffer
+      (kbd "g d") 'xref-find-definitions
+      (kbd "g D") 'xref-find-references
+      (kbd "K")   'eldoc)))
+
+;; indentation
+;; Use spaces for indentation
+(setq-default indent-tabs-mode nil)
+
+;; Set the width of tabs for display purposes (optional, as we use spaces)
+(setq-default tab-width 4)
+
+;; Define a function to set C/C++ specific indentation
+(defun my/c-c++-hook ()
+  "Custom settings for C and C++ modes."
+  (setq c-basic-offset 4)
+  ;; Ensure spaces are used for indentation within this mode
+  (setq indent-tabs-mode nil))
+
+;; Add this function to the hooks for C and C++ modes
+(add-hook 'c-mode-hook 'my/c-c++-hook)
+(add-hook 'c++-mode-hook 'my/c-c++-hook)

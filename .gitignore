@@ -16,3 +16,5 @@ transient/
 custom.el
 custom.el~
 *.elc
+elfeed.org
+elfeed.org~
