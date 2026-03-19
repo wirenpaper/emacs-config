@@ -528,6 +528,93 @@
   (call-interactively 'my/set-speed-dial-tag) 
   (hydra-speed-dial/body))
 
+(defun my/hydra-rename-tag ()
+  "Rename an existing tag and move all its files to the new name."
+  (interactive)
+  (bookmark-maybe-load-default-file)
+  (let* ((root (my/get-workspace))
+         (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+         (prefix (format "wt|%s|" root))
+         (all-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
+         (clean-tags (delq nil (mapcar (lambda (t-name)
+                                         (when (string-prefix-p prefix t-name)
+                                           (substring t-name (length prefix))))
+                                       all-tags))))
+    (if (not clean-tags)
+        (message "No tags exist to rename!")
+      (let* ((old-tag (completing-read "Rename tag: " clean-tags nil t))
+             (new-tag (read-string (format "Rename [%s] to: " old-tag))))
+        (if (or (string= "" new-tag) (member new-tag clean-tags))
+            (message "Cancelled: Tag name cannot be empty or already exist.")
+          (let ((wt-old (format "wt|%s|%s" root old-tag))
+                (wt-new (format "wt|%s|%s" root new-tag))
+                (prop-old (intern (format "slot|%s|%s" root old-tag)))
+                (prop-new (intern (format "slot|%s|%s" root new-tag)))
+                (modified nil))
+            (dolist (bm project-bms)
+              (let* ((bm-name (car bm))
+                     (tags (bookmark-prop-get bm-name 'tags)))
+                (when (member wt-old tags)
+                  (setq modified t)
+                  ;; Swap out the tags
+                  (setq tags (remove wt-old tags))
+                  (push wt-new tags)
+                  (bookmark-prop-set bm-name 'tags tags)
+                  ;; Swap out the slots
+                  (let ((slot-val (bookmark-prop-get bm-name prop-old)))
+                    (when slot-val
+                      (bookmark-prop-set bm-name prop-new slot-val)
+                      (bookmark-prop-set bm-name prop-old nil))))))
+            (when modified
+              (bookmark-save)
+              ;; If they renamed their currently active tag, seamlessly switch to the new name
+              (when (string= my/current-speed-dial-tag old-tag)
+                (setq my/current-speed-dial-tag new-tag)
+                (my/save-workspace-tag root new-tag))
+              (message "Renamed tag [%s] to[%s]!" old-tag new-tag)))))))
+  (hydra-speed-dial/body))
+
+(defun my/hydra-copy-tag ()
+  "Copy an existing tag and its slot layout into a new tag name."
+  (interactive)
+  (bookmark-maybe-load-default-file)
+  (let* ((root (my/get-workspace))
+         (project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm root)) bookmark-alist))
+         (prefix (format "wt|%s|" root))
+         (all-tags (cl-remove-duplicates (apply #'append (mapcar (lambda (bm) (bookmark-prop-get bm 'tags)) project-bms)) :test #'string=))
+         (clean-tags (delq nil (mapcar (lambda (t-name)
+                                         (when (string-prefix-p prefix t-name)
+                                           (substring t-name (length prefix))))
+                                       all-tags))))
+    (if (not clean-tags)
+        (message "No tags exist to copy!")
+      (let* ((old-tag (completing-read "Copy tag: " clean-tags nil t))
+             (new-tag (read-string (format "Copy [%s] to new tag: " old-tag))))
+        (if (or (string= "" new-tag) (member new-tag clean-tags))
+            (message "Cancelled: Tag name cannot be empty or already exist.")
+          (let ((wt-old (format "wt|%s|%s" root old-tag))
+                (wt-new (format "wt|%s|%s" root new-tag))
+                (prop-old (intern (format "slot|%s|%s" root old-tag)))
+                (prop-new (intern (format "slot|%s|%s" root new-tag)))
+                (modified nil))
+            (dolist (bm project-bms)
+              (let* ((bm-name (car bm))
+                     (tags (bookmark-prop-get bm-name 'tags)))
+                (when (member wt-old tags)
+                  (setq modified t)
+                  ;; Add the new tag (keep the old one)
+                  (unless (member wt-new tags)
+                    (push wt-new tags)
+                    (bookmark-prop-set bm-name 'tags tags))
+                  ;; Copy the slot over to the new tag layout
+                  (let ((slot-val (bookmark-prop-get bm-name prop-old)))
+                    (when slot-val
+                      (bookmark-prop-set bm-name prop-new slot-val))))))
+            (when modified
+              (bookmark-save)
+              (message "Copied layout of [%s] into [%s]!" old-tag new-tag)))))))
+  (hydra-speed-dial/body))
+
 ;; ==========================================
 ;; 6. HYDRA HUD MANAGER
 ;; ==========================================
@@ -539,7 +626,7 @@
   ((eq my/speed-dial-mode 'pick)
    \"\n\n  >>> [MOVE MODE] PRESS BOOKMARK KEY TO PICK UP <<<\")
   ((eq my/speed-dial-mode 'drop)
-   (format \"\n\n  >>>[MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\"
+   (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\"
            (if (and my/pending-move-bm (file-name-absolute-p my/pending-move-bm))
                (file-name-nondirectory my/pending-move-bm)
              my/pending-move-bm)))
@@ -549,17 +636,17 @@
    (if my/pending-tag-target
        (format \"\n\n  >>> [TAG MODE] READY TO PIN: [%s] ... PRESS A SLOT KEY <<<\"
                (file-name-nondirectory my/pending-tag-target))
-     \"\n\n  >>>[TAG MODE] PRESS SLOT KEY TO TAG CURRENT FILE <<<\"))
+     \"\n\n  >>> [TAG MODE] PRESS SLOT KEY TO TAG CURRENT FILE <<<\"))
   (t \"\"))
 -----------------------------------------------------------------------------------------------------
-_a_: %s(my/sd-name 'left 1)  _j_: %s(my/sd-name 'right 1)  _T_: Tag File
-_s_: %s(my/sd-name 'left 2)  _k_: %s(my/sd-name 'right 2)  _F_: Find & Tag
-_d_: %s(my/sd-name 'left 3)  _l_: %s(my/sd-name 'right 3)  _U_: Untag Slot
-_f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Toggle Move
-_z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _C_: Create Tag
-_x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  _W_: Wipe Tag
-_c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _X_: Nuke Workspace
-_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspc | _t_: Lock Tag | _q_: Quit HUD 
+_a_: %s(my/sd-name 'left 1)  _j_: %s(my/sd-name 'right 1)  _T_: Tag File     _C_: Create Tag
+_s_: %s(my/sd-name 'left 2)  _k_: %s(my/sd-name 'right 2)  _F_: Find & Tag   _R_: Rename Tag
+_d_: %s(my/sd-name 'left 3)  _l_: %s(my/sd-name 'right 3)  _U_: Untag Slot   _Y_: Copy Tag
+_f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Move Slot    _W_: Wipe Tag
+_z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _X_: Nuke Workspace
+_x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  
+_c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _p_: Lock Workspc | _t_: Lock Tag
+_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD
   "
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
   ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
@@ -577,6 +664,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _p_: Lock Workspc | _
 
   ("T" my/hydra-start-tag) ("F" my/hydra-find-and-tag) ("U" my/hydra-start-untag)
   ("M" my/hydra-start-move) ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag)
+  ("R" my/hydra-rename-tag) ("Y" my/hydra-copy-tag)
   ("X" my/hydra-wipe-workspace) ("p" my/set-workspace-and-resume)
   ("t" my/set-tag-and-resume) ("q" my/hydra-quit) ("<escape>" my/hydra-quit)
   ("C-g" my/hydra-quit))
