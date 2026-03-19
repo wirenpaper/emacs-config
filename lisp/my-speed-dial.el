@@ -222,6 +222,17 @@
 (defun my/speed-dial-jump (tag num)
   "Jump to the NUM-th bookmark of TAG, handle Move, Tag, OR handle Untag."
   (bookmark-maybe-load-default-file)
+
+  ;; --- NEW: Auto-create "main" tag if dropping/tagging into an empty right-hand ---
+  (when (and (not tag)
+             (or (eq my/speed-dial-mode 'tag)
+                 (eq my/speed-dial-mode 'drop)))
+    (let ((root (my/get-workspace)))
+      (setq tag "main")
+      (setq my/current-speed-dial-tag "main")
+      (my/save-workspace-tag root "main")
+      (message "Auto-created default dynamic tag: [main]")))
+
   (if (not tag)
       (progn
         (message "No dynamic tag set for the right hand! Press 't' to lock one.")
@@ -331,7 +342,7 @@
                     (bookmark-delete target)
                     (message "Untagged '%s' and DELETED bookmark (not in any workspace)." (file-name-nondirectory target)))
                 (bookmark-save)
-                (message "Untagged '%s' from[%s]" (file-name-nondirectory target) tag)))))
+                (message "Untagged '%s' from [%s]" (file-name-nondirectory target) tag)))))
         (setq my/speed-dial-mode 'normal)
         (hydra-speed-dial/body))))))
 
