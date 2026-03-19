@@ -615,6 +615,128 @@
               (message "Copied layout of [%s] into [%s]!" old-tag new-tag)))))))
   (hydra-speed-dial/body))
 
+(defun my/get-all-workspaces ()
+  "Return a list of all known workspace roots."
+  (let ((roots nil))
+    (dolist (bm bookmark-alist)
+      (let ((tags (bookmark-prop-get (car bm) 'tags)))
+        (dolist (tag tags)
+          (when (string-prefix-p "proj:" tag)
+            (cl-pushnew (substring tag 5) roots :test #'string=)))))
+    roots))
+
+(defun my/hydra-clone-workspace ()
+  "Clone another workspace's layout INTO the currently locked workspace."
+  (interactive)
+  (bookmark-maybe-load-default-file)
+  
+  ;; 1. Ensure we have a target workspace (the currently locked one)
+  (unless my/current-workspace-root
+    (error "No workspace locked! Press 'p' to lock into your blank target workspace first."))
+    
+  (let* ((target-root (expand-file-name (file-name-as-directory my/current-workspace-root)))
+         (all-workspaces (my/get-all-workspaces))
+         ;; 2. Remove the current workspace from the choices so you can't clone into itself
+         (source-workspaces (remove target-root all-workspaces)))
+         
+    (unless source-workspaces
+      (error "No other workspaces found to clone from!"))
+      
+    ;; 3. Prompt ONLY for the source workspace
+    (let* ((source-root (completing-read "Source workspace to clone from: " source-workspaces nil t))
+           (source-root-exp (expand-file-name (file-name-as-directory source-root))))
+
+      ;; 4. Enforce current workspace is entirely empty of bookmarks
+      (let ((target-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm target-root)) bookmark-alist)))
+        (when target-bms
+          (error "Current workspace already contains bookmarks! Please nuke it first (X) before cloning.")))
+
+      (let ((project-bms (cl-remove-if-not (lambda (bm) (my/bookmark-belongs-to-workspace-p bm source-root-exp)) bookmark-alist))
+            (cloned-count 0))
+            
+        ;; --- PRE-FLIGHT CHECK ---
+        (let ((missing-files nil))
+          (dolist (bm project-bms)
+            (let* ((raw-path (bookmark-prop-get (car bm) 'filename))
+                   (old-path (when raw-path (expand-file-name raw-path)))
+                   (is-local (and old-path (string-prefix-p source-root-exp old-path))))
+              (when is-local
+                (let ((new-path (concat target-root (substring old-path (length source-root-exp)))))
+                  (unless (file-exists-p new-path)
+                    (push new-path missing-files))))))
+          (when missing-files
+            (error "Abort: Target directory is missing %d required files (e.g., '%s'). Did you copy the project files over first?"
+                   (length missing-files)
+                   (file-name-nondirectory (car missing-files)))))
+
+        ;; --- CLONE EXECUTION ---
+        (dolist (bm project-bms)
+          (let* ((old-bm-name (car bm))
+                 (raw-path (bookmark-prop-get old-bm-name 'filename))
+                 (old-path (when raw-path (expand-file-name raw-path)))
+                 (is-local (and old-path (string-prefix-p source-root-exp old-path)))
+                 
+                 (new-path (if is-local
+                               (concat target-root (substring old-path (length source-root-exp)))
+                             raw-path)) 
+                             
+                 (new-bm-name (if is-local new-path old-bm-name))
+                 (old-tags (bookmark-prop-get old-bm-name 'tags))
+                 
+                 (existing-alist (if (assoc new-bm-name bookmark-alist)
+                                     (copy-alist (cdr (assoc new-bm-name bookmark-alist)))
+                                   `((filename . ,new-path))))
+                                   
+                 (base-tags (if is-local
+                                (cl-remove-if (lambda (t-name) 
+                                                (or (string-prefix-p "proj:" t-name)
+                                                    (string-prefix-p "wt|" t-name)))
+                                              old-tags)
+                              (alist-get 'tags existing-alist)))
+                 (new-tags base-tags))
+
+            (unless (member (concat "proj:" target-root) new-tags)
+              (push (concat "proj:" target-root) new-tags))
+
+            (dolist (tag old-tags)
+              (when (string-prefix-p (format "wt|%s|" source-root-exp) tag)
+                (let ((new-wt (concat "wt|" target-root "|" (substring tag (length (format "wt|%s|" source-root-exp))))))
+                  (unless (member new-wt new-tags)
+                    (push new-wt new-tags)))))
+
+            (setf (alist-get 'tags existing-alist) new-tags)
+
+            (when is-local
+              (let ((clean-alist nil))
+                (dolist (pair existing-alist)
+                  (unless (and (symbolp (car pair)) (string-prefix-p "slot|" (symbol-name (car pair))))
+                    (push pair clean-alist)))
+                (setq existing-alist (nreverse clean-alist))))
+
+            (dolist (prop-cons (cdr bm))
+              (let ((prop-name (symbol-name (car prop-cons))))
+                (when (string-prefix-p (format "slot|%s|" source-root-exp) prop-name)
+                  (let* ((tag-name (substring prop-name (length (format "slot|%s|" source-root-exp))))
+                         (new-prop-sym (intern (format "slot|%s|%s" target-root tag-name)))
+                         (slot-val (cdr prop-cons)))
+                    (setf (alist-get new-prop-sym existing-alist) slot-val)))))
+
+            (bookmark-store new-bm-name existing-alist nil)
+            (cl-incf cloned-count)))
+        
+        ;; --- CLONE THE META-STATE ---
+        (let ((source-tag (my/get-saved-workspace-tag source-root-exp)))
+          (when source-tag
+            (my/save-workspace-tag target-root source-tag)
+            ;; Instantly update the current HUD's right hand view
+            (setq my/current-speed-dial-tag source-tag)))
+
+        (bookmark-save)
+        (message "Successfully pulled %d slots from '%s' into current workspace!" 
+                 cloned-count 
+                 (file-name-nondirectory (directory-file-name source-root-exp))))))
+  (hydra-speed-dial/body))
+
 ;; ==========================================
 ;; 6. HYDRA HUD MANAGER
 ;; ==========================================
@@ -624,29 +746,29 @@
 ^WORKSPACE^: %s(or my/current-workspace-root \"[None Locked - Press 'p']\")
 ^TAG    ^  : %s(or my/current-speed-dial-tag \"[No Tag Selected - Press 't']\")%s(cond
   ((eq my/speed-dial-mode 'pick)
-   \"\n\n  >>> [MOVE MODE] PRESS BOOKMARK KEY TO PICK UP <<<\")
+   \"\n\n  >>>[MOVE MODE] PRESS BOOKMARK KEY TO PICK UP <<<\")
   ((eq my/speed-dial-mode 'drop)
-   (format \"\n\n  >>> [MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\"
+   (format \"\n\n  >>>[MOVE MODE] CARRYING:[%s] ... PRESS TARGET KEY TO DROP! <<<\"
            (if (and my/pending-move-bm (file-name-absolute-p my/pending-move-bm))
                (file-name-nondirectory my/pending-move-bm)
              my/pending-move-bm)))
   ((eq my/speed-dial-mode 'untag)
-   \"\n\n  >>> [UNTAG MODE] PRESS SLOT KEY TO UNTAG <<<\")
+   \"\n\n  >>>[UNTAG MODE] PRESS SLOT KEY TO UNTAG <<<\")
   ((eq my/speed-dial-mode 'tag)
    (if my/pending-tag-target
-       (format \"\n\n  >>> [TAG MODE] READY TO PIN: [%s] ... PRESS A SLOT KEY <<<\"
+       (format \"\n\n  >>>[TAG MODE] READY TO PIN: [%s] ... PRESS A SLOT KEY <<<\"
                (file-name-nondirectory my/pending-tag-target))
-     \"\n\n  >>> [TAG MODE] PRESS SLOT KEY TO TAG CURRENT FILE <<<\"))
+     \"\n\n  >>>[TAG MODE] PRESS SLOT KEY TO TAG CURRENT FILE <<<\"))
   (t \"\"))
 -----------------------------------------------------------------------------------------------------
 _a_: %s(my/sd-name 'left 1)  _j_: %s(my/sd-name 'right 1)  _T_: Tag File     _C_: Create Tag
 _s_: %s(my/sd-name 'left 2)  _k_: %s(my/sd-name 'right 2)  _F_: Find & Tag   _R_: Rename Tag
 _d_: %s(my/sd-name 'left 3)  _l_: %s(my/sd-name 'right 3)  _U_: Untag Slot   _Y_: Copy Tag
-_f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Move Slot    _W_: Wipe Tag
+_f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Toggle Move  _W_: Wipe Tag
 _z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _X_: Nuke Workspace
 _x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  
-_c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _p_: Lock Workspc | _t_: Lock Tag
-_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD
+_c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _p_: Lock Workspc | _P_: Clone Workspc
+_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _q_: Quit HUD
   "
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
   ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
@@ -666,8 +788,8 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD
   ("M" my/hydra-start-move) ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag)
   ("R" my/hydra-rename-tag) ("Y" my/hydra-copy-tag)
   ("X" my/hydra-wipe-workspace) ("p" my/set-workspace-and-resume)
-  ("t" my/set-tag-and-resume) ("q" my/hydra-quit) ("<escape>" my/hydra-quit)
-  ("C-g" my/hydra-quit))
+  ("P" my/hydra-clone-workspace) ("t" my/set-tag-and-resume) 
+  ("q" my/hydra-quit) ("<escape>" my/hydra-quit) ("C-g" my/hydra-quit))
 
 ;; ==========================================
 ;; 7. Auto-load Last Workspace
