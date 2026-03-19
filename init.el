@@ -597,6 +597,9 @@
 ;; Set the width of tabs for display purposes (optional, as we use spaces)
 (setq-default tab-width 4)
 
+;; Tell the byte-compiler this variable exists to silence the warning
+(defvar c-basic-offset)
+
 ;; Define a function to set C/C++ specific indentation
 (defun my/c-c++-hook ()
   "Custom settings for C and C++ modes."
