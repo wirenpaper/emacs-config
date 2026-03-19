@@ -18,8 +18,6 @@
 ;; ==========================================
 ;; 1. GLOBAL STATE & VARIABLES
 ;; ==========================================
-;; All defvars must be at the top so the byte-compiler knows they exist
-;; and correctly handles them in lexically-bound functions.
 
 (defvar my/current-workspace-root nil
   "The manually selected workspace directory.")
@@ -43,7 +41,6 @@
 ;; ==========================================
 ;; 2. CORE HELPERS & UTILITIES
 ;; ==========================================
-;; Functions called by other functions should be defined first.
 
 (defun my/get-workspace ()
   "Return the active workspace, or throw an error if none is set."
@@ -96,6 +93,26 @@
           (setq val (if (file-name-absolute-p target) (file-name-nondirectory target) target)))))
     (truncate-string-to-width val 35 0 ?\s "…")))
 
+;; --- STATE PERSISTENCE HELPERS ---
+
+(defun my/get-saved-workspace-tag (root)
+  "Retrieve the last used right-hand tag for the workspace ROOT."
+  (let ((bm-name (format "sd-workspace-state|%s" root)))
+    (when (assoc bm-name bookmark-alist)
+      (bookmark-prop-get bm-name 'active-tag))))
+
+(defun my/save-workspace-tag (root tag)
+  "Save TAG as the last active right-hand tag for workspace ROOT."
+  (let* ((bm-name (format "sd-workspace-state|%s" root))
+         (existing (assoc bm-name bookmark-alist))
+         (alist (if existing (cdr existing) nil)))
+    ;; Safely update the active-tag property
+    (setf (alist-get 'active-tag alist) tag)
+    ;; Using `bookmark-store` properly formats the bookmark and, most importantly,
+    ;; increments `bookmark-alist-modification-count` so Emacs actually flushes it to disk!
+    (bookmark-store bm-name alist nil)
+    (bookmark-save)))
+
 ;; ==========================================
 ;; 3. WORKSPACE & TAGGING LOGIC
 ;; ==========================================
@@ -103,11 +120,15 @@
 (defun my/set-workspace ()
   "Manually lock Emacs into a specific workspace directory."
   (interactive)
+  (bookmark-maybe-load-default-file)
   (let* ((target-dir (read-directory-name "Select workspace directory: "))
-         (root (expand-file-name (file-name-as-directory target-dir))))
+         (root (expand-file-name (file-name-as-directory target-dir)))
+         (saved-tag (my/get-saved-workspace-tag root)))
     (setq my/current-workspace-root root)
-    (setq my/current-speed-dial-tag nil) ;; Clear right-hand tag on switch
-    (message "Workspace locked to: %s" root)))
+    (setq my/current-speed-dial-tag saved-tag) ;; Auto-restore tag for this workspace
+    (if saved-tag
+        (message "Workspace locked to: %s (Restored tag: [%s])" root saved-tag)
+      (message "Workspace locked to: %s" root))))
 
 (defun my/set-speed-dial-tag ()
   "Choose a tag for the RIGHT hand keys in the locked workspace."
@@ -123,7 +144,9 @@
                                        all-tags))))
     (if (not clean-tags)
         (message "No tags found! Press 'N' to tag a file first.")
-      (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags)))))
+      (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags))
+      (my/save-workspace-tag root my/current-speed-dial-tag) ;; Persist to Emacs bookmarks
+      (message "Locked right hand to tag: [%s]" my/current-speed-dial-tag))))
 
 (defun my/project-bookmark-jump ()
   "Jump to a bookmark inside your manually locked workspace, from anywhere."
@@ -335,24 +358,18 @@
     (with-current-buffer buf
       (erase-buffer)
       (insert (propertize hud-text 'face 'bold))
-      
-      ;; 1. Move cursor back to the top to prevent auto-scrolling
       (goto-char (point-min))
-      
       (setq-local mode-line-format nil 
                   header-line-format nil 
                   cursor-type nil 
                   truncate-lines t
                   window-size-fixed t))
     
-    ;; Unchanged from your original code
     (setq win (display-buffer buf 
                               '((display-buffer-in-side-window) 
                                 (side . top) 
                                 (window-height . fit-window-to-buffer))))
     (set-window-dedicated-p win t)
-
-    ;; 2. Force the window view to start exactly at the top
     (set-window-start win (point-min))
     
     (condition-case nil
@@ -399,6 +416,7 @@
     (if (string= "" new-tag)
         (message "Cancelled: Tag name cannot be empty.")
       (setq my/current-speed-dial-tag new-tag)
+      (my/save-workspace-tag (my/get-workspace) new-tag)
       (message "Created and locked new tag: [%s]" new-tag)))
   (hydra-speed-dial/body))
 
@@ -437,7 +455,8 @@
                       (setq deleted-count (1+ deleted-count)))))))))
         (when modified (bookmark-save))
         (when (string= my/current-speed-dial-tag tag-to-nuke) 
-          (setq my/current-speed-dial-tag nil))
+          (setq my/current-speed-dial-tag nil)
+          (my/save-workspace-tag root nil)) ;; Clear saved state
         (message "Wiped tag '%s' (Deleted %d orphaned globally)." tag-to-nuke deleted-count))))
   (hydra-speed-dial/body))
 
@@ -465,6 +484,13 @@
               (when (not remaining-proj)
                 (bookmark-delete bm-name)))))
         (bookmark-save)
+        
+        ;; Nuke the hidden state bookmark for this workspace
+        (let ((state-bm (format "sd-workspace-state|%s" root)))
+          (when (assoc state-bm bookmark-alist)
+            (bookmark-delete state-bm)
+            (bookmark-save)))
+        
         (setq my/current-workspace-root nil)
         (setq my/current-speed-dial-tag nil)
         (message "Workspace clean successfully!"))))
