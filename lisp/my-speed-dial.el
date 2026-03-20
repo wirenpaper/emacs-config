@@ -149,12 +149,15 @@
   (interactive)
   (let* ((root (my/get-workspace))
          (rows (sqlite-select my/sd-db "SELECT DISTINCT tag FROM speed_dial WHERE workspace=? AND tag != 'global'" (list root)))
-         (clean-tags (mapcar #'car rows)))
-    (if (not clean-tags)
-        (message "No custom tags found! Press 'N' to tag a file first.")
-      (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags))
+         (all-tags (mapcar #'car rows))
+         (other-tags (remove my/current-speed-dial-tag all-tags)))
+    (if (not other-tags)
+        (if all-tags
+            (message "You are already on the only tag [%s]! Press 'C' to create a new one." my/current-speed-dial-tag)
+          (message "No custom tags found! Press 'C' to create one."))
+      (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " other-tags))
       (my/save-workspace-tag root my/current-speed-dial-tag)
-      (message "Locked right hand to tag:[%s]" my/current-speed-dial-tag))))
+      (message "Locked right hand to tag: [%s]" my/current-speed-dial-tag))))
 
 (defun my/project-bookmark-jump ()
   "Jump to any bookmark inside your manually locked workspace."
@@ -326,7 +329,8 @@
   >>>[TAG MODE] SEARCHING FOR FILE... PRESS A SLOT KEY AFTERWARDS <<<
 
   GLOBAL (Left Hand)                DYNAMIC (Right Hand)
-  [a]: %-22s  [j]: %-22s[s]: %-22s  [k]: %-22s
+  [a]: %-22s  [j]: %-22s
+  [s]: %-22s  [k]: %-22s
   [d]: %-22s  [l]: %-22s
   [f]: %-22s  [;]: %-22s
   [z]: %-22s  [m]: %-22s
