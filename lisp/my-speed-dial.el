@@ -154,7 +154,7 @@
         (message "No custom tags found! Press 'N' to tag a file first.")
       (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " clean-tags))
       (my/save-workspace-tag root my/current-speed-dial-tag)
-      (message "Locked right hand to tag: [%s]" my/current-speed-dial-tag))))
+      (message "Locked right hand to tag:[%s]" my/current-speed-dial-tag))))
 
 (defun my/project-bookmark-jump ()
   "Jump to any bookmark inside your manually locked workspace."
@@ -195,7 +195,7 @@
     (let* ((used-slots (mapcar #'car (sqlite-select my/sd-db "SELECT slot FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
            (free-slot (cl-find-if-not (lambda (s) (member s used-slots)) '(1 2 3 4 5 6 7 8))))
       (if (not free-slot)
-          (message "Tag [%s] is full! All 8 slots are used." tag)
+          (message "Tag[%s] is full! All 8 slots are used." tag)
         (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                         (list root tag free-slot name data-str))
         (message "Pinned '%s' to Slot %d on [%s]" name free-slot tag)))))
@@ -236,16 +236,17 @@
         (if row
             (let* ((name (nth 0 (car row)))
                    (data (read (nth 1 (car row))))
-                   (file-path (alist-get 'filename data)))
+                   (file-path (alist-get 'filename data))
+                   (exp-path (when file-path (expand-file-name file-path))))
               (cond
-               ((and file-path (not (file-exists-p file-path)))
-                (message "Path '%s' no longer exists! Auto-cleaning slot..." file-path)
+               ((and exp-path (not (file-exists-p exp-path)))
+                (message "Path '%s' no longer exists! Auto-cleaning slot..." exp-path)
                 (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" (list root tag num))
                 (hydra-speed-dial/body))
-               ((and file-path (not (file-directory-p file-path)))
+               ((and exp-path (not (file-directory-p exp-path)))
                 ;; Use find-file for actual files so save-place-mode handles cursor position!
-                (let ((buf (get-file-buffer file-path)))
-                  (if buf (switch-to-buffer buf) (find-file file-path))))
+                (let ((buf (find-buffer-visiting exp-path)))
+                  (if buf (switch-to-buffer buf) (find-file exp-path))))
                (t 
                 ;; Let Emacs's bookmark engine handle Magit, Dired, etc.
                 (bookmark-jump (cons name data)))))
@@ -325,8 +326,7 @@
   >>>[TAG MODE] SEARCHING FOR FILE... PRESS A SLOT KEY AFTERWARDS <<<
 
   GLOBAL (Left Hand)                DYNAMIC (Right Hand)
-  [a]: %-22s  [j]: %-22s
-  [s]: %-22s  [k]: %-22s
+  [a]: %-22s  [j]: %-22s[s]: %-22s  [k]: %-22s
   [d]: %-22s  [l]: %-22s
   [f]: %-22s  [;]: %-22s
   [z]: %-22s  [m]: %-22s
@@ -429,7 +429,7 @@
     (if (not clean-tags)
         (message "No tags exist to rename!")
       (let* ((old-tag (completing-read "Rename tag: " clean-tags nil t))
-             (new-tag (read-string (format "Rename [%s] to: " old-tag))))
+             (new-tag (read-string (format "Rename[%s] to: " old-tag))))
         (if (or (string= "" new-tag) (member new-tag clean-tags))
             (message "Cancelled: Tag name cannot be empty or already exist.")
           (sqlite-execute my/sd-db "UPDATE OR REPLACE speed_dial SET tag=? WHERE workspace=? AND tag=?" 
@@ -487,7 +487,8 @@
         (let ((missing-files nil))
           (dolist (row rows)
             (let* ((data (read (nth 3 row)))
-                   (old-path (alist-get 'filename data)))
+                   (raw-path (alist-get 'filename data))
+                   (old-path (when raw-path (expand-file-name raw-path))))
               (when (and old-path (string-prefix-p source-root-exp old-path))
                 (let ((new-path (concat target-root (substring old-path (length source-root-exp)))))
                   (unless (file-exists-p new-path)
@@ -502,16 +503,21 @@
                  (slot (nth 1 row))
                  (name (nth 2 row))
                  (data (read (nth 3 row)))
-                 (old-path (alist-get 'filename data)))
+                 (raw-path (alist-get 'filename data))
+                 (old-path (when raw-path (expand-file-name raw-path))))
             
-            ;; Adjust internal paths
+            ;; Adjust internal paths (Only triggers if the file was inside the original project folder)
             (when (and old-path (string-prefix-p source-root-exp old-path))
-              (setf (alist-get 'filename data) (concat target-root (substring old-path (length source-root-exp)))))
+              (setf (alist-get 'filename data) 
+                    (abbreviate-file-name (concat target-root (substring old-path (length source-root-exp))))))
             
             ;; Adjust floating names if they are pure paths
-            (let ((new-name (if (string-prefix-p source-root-exp name)
-                                (concat target-root (substring name (length source-root-exp)))
-                              name)))
+            (let ((new-name name))
+              (when (and name (file-name-absolute-p name))
+                (let ((exp-name (expand-file-name name)))
+                  (when (string-prefix-p source-root-exp exp-name)
+                    (setq new-name (abbreviate-file-name (concat target-root (substring exp-name (length source-root-exp))))))))
+              
               (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                               (list target-root tag slot new-name (prin1-to-string data))))))
         
