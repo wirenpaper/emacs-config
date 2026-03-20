@@ -20,3 +20,5 @@ elfeed.org
 elfeed.org~
 url/
 .#init.el
+.gitignore
+speed-dial.sqlite
