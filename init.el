@@ -391,7 +391,7 @@
 ;; Reset memory back to normal after startup so Emacs doesn't freeze during normal use
 (add-hook 'emacs-startup-hook
           (lambda ()
-            (setq gc-cons-threshold (* 100 1024 1024)))) ;; 100 MB
+            (setq gc-cons-threshold (* 16 1024 1024)))) ;; 100 MB
 
 ;; ==========================================
 ;; 9. Elfeed & Elfeed-Org
@@ -440,110 +440,89 @@
 (setq large-file-warning-threshold (* 50 1024 1024))
 
 (use-package pdf-tools
-  ;; This line is the magic key: it forces Emacs to load this package for ALL .pdf files
   :mode ("\\.pdf\\'" . pdf-view-mode) 
-  :hook (pdf-view-mode . pdf-view-midnight-minor-mode) ;; Optional: Dark mode for PDFs!
+  :hook ((pdf-view-mode . pdf-view-midnight-minor-mode)
+         ;; FIX 1: Move this here! Now it registers before pdf-tools even loads.
+         ;; Emacs will safely disable line numbers before the display engine crashes.
+         (pdf-view-mode . (lambda () (display-line-numbers-mode -1))))
   :config
-  ;; Install and initialize the package
-  (pdf-tools-install)
   
-  ;; FIX 1: Automatically turn off line numbers when reading a PDF to stop the warnings
-  (add-hook 'pdf-view-mode-hook (lambda () (display-line-numbers-mode -1)))
+  ;; FIX 2: Add 't' (no-query). This prevents Emacs from deadlocking if it
+  ;; needs to compile or start the epdfinfo server in the background.
+  (pdf-tools-install t)
   
-  ;; FIX 2 (Part 1): Turn on Emacs' built-in memory for where your cursor was
-  (save-place-mode 1))
+  ;; Turn on Emacs' built-in memory for where your cursor was
+  (save-place-mode 1)
 
-;; FIX 2 (Part 2): The add-on that tells the memory mode how to handle PDFs
-(use-package saveplace-pdf-view
-  :after pdf-tools)
+  ;; ==========================================
+  ;; Show Current PDF Chapter Hierarchy (Breadcrumbs)
+  ;; ==========================================
+ (with-no-warnings
+    (defvar-local my-pdf-chapter-cache (cons 0 "")))
 
-;;How to fix it if it ever breaks
-;;If a system update ever breaks your PDF viewer, do not panic! You do not need to rewrite your config.
-;;All you have to do is tell Emacs to rebuild the engine against your new system libraries:
-;;Open Emacs.
-;;Press Alt + x (or SPC :).
-;;Type pdf-tools-install and hit Enter.
-
-;; ==========================================
-;; Show Current PDF Chapter Hierarchy (Breadcrumbs)
-;; ==========================================
-
-;; Local memory to store the chapter so we don't slow Emacs down
-(defvar-local my-pdf-chapter-cache (cons 0 ""))
-
-(defun my-pdf-update-header-line ()
-  "Find current chapter hierarchy and show it in the top header line."
-  (ignore-errors
-    (when (eq major-mode 'pdf-view-mode)
-      (let ((current-page (pdf-view-current-page)))
-        ;; Only recalculate if we actually turned a page
-        (unless (eq current-page (car my-pdf-chapter-cache))
-          (let ((best-title "")
-                ;; Ask pdf-tools server for the metadata
-                (outline (pdf-info-outline))
-                ;; Create a temporary array to hold the path (up to 20 levels deep)
-                (path (make-vector 20 nil))
-                (best-path-list nil)) 
-            
-            (when outline
-              (dolist (node outline)
-                (let* ((node-page (alist-get 'page node))
-                       (node-depth (alist-get 'depth node))
-                       (raw-title (alist-get 'title node))
-                       ;; Clean up title (removes accidental newlines/tabs from PDF metadata)
-                       (node-title (if (stringp raw-title)
-                                       (replace-regexp-in-string "[ \t\n\r]+" " " raw-title)
-                                     "")))
-                  
-                  ;; If we have passed (or are on) the page of this section
-                  (when (and (numberp node-page) 
-                             (<= node-page current-page)
-                             (numberp node-depth)
-                             (> node-depth 0))
-                    
-                    ;; Expand memory if the PDF has insanely deep nesting (> 20 levels)
-                    (when (>= node-depth (length path))
-                      (setq path (vconcat path (make-vector node-depth nil))))
-                    
-                    ;; Insert the title at its exact depth level
-                    (aset path (1- node-depth) node-title)
-                    
-                    ;; Crucial: Clear out any deeper subsections left over from previous chapters
-                    (let ((i node-depth))
-                      (while (< i (length path))
-                        (aset path i nil)
-                        (setq i (1+ i))))
-                    
-                    ;; Take a snapshot of the valid path so far
-                    (setq best-path-list (append path nil)))))
+  (defun my-pdf-update-header-line ()
+    "Find current chapter hierarchy and show it in the top header line."
+    (ignore-errors
+      ;; FIX 3: Do NOT execute if the background server is still booting up!
+      (when (and (eq major-mode 'pdf-view-mode)
+                 (pdf-info-running-p))
+        (let ((current-page (pdf-view-current-page)))
+          (unless (eq current-page (car my-pdf-chapter-cache))
+            (let ((best-title "")
+                  (outline (pdf-info-outline))
+                  (path (make-vector 20 nil))
+                  (best-path-list nil)) 
               
-              ;; Clean up empty levels and combine them with " -> "
-              (when best-path-list
-                (setq best-title 
-                      (mapconcat #'identity 
-                                 (delq nil (mapcar (lambda (x) (and (stringp x) (not (string-empty-p x)) x)) 
-                                                   best-path-list)) 
-                                 " ➔ ")))) ;; Change " ➔ " to " -> " if your font doesn't support the arrow!
-            
-            ;; Save to memory cache
-            (setq my-pdf-chapter-cache (cons current-page best-title))))
-        
-        ;; Update the top bar (header-line)
-        (setq header-line-format
-              (if (string-empty-p (cdr my-pdf-chapter-cache))
-                  nil ;; Hide the bar if no metadata exists for this page
-                (format "  📖 %s " (cdr my-pdf-chapter-cache))))))))
+              (when outline
+                (dolist (node outline)
+                  (let* ((node-page (alist-get 'page node))
+                         (node-depth (alist-get 'depth node))
+                         (raw-title (alist-get 'title node))
+                         (node-title (if (stringp raw-title)
+                                         (replace-regexp-in-string "[ \t\n\r]+" " " raw-title)
+                                       "")))
+                    (when (and (numberp node-page) 
+                               (<= node-page current-page)
+                               (numberp node-depth)
+                               (> node-depth 0))
+                      (when (>= node-depth (length path))
+                        (setq path (vconcat path (make-vector node-depth nil))))
+                      (aset path (1- node-depth) node-title)
+                      (let ((i node-depth))
+                        (while (< i (length path))
+                          (aset path i nil)
+                          (setq i (1+ i))))
+                      (setq best-path-list (append path nil)))))
+                
+                (when best-path-list
+                  (setq best-title 
+                        (mapconcat #'identity 
+                                   (delq nil (mapcar (lambda (x) (and (stringp x) (not (string-empty-p x)) x)) 
+                                                     best-path-list)) 
+                                   " ➔ "))))
+              
+              (setq my-pdf-chapter-cache (cons current-page best-title))))
+          
+          (setq header-line-format
+                (if (string-empty-p (cdr my-pdf-chapter-cache))
+                    nil 
+                  (format "  📖 %s " (cdr my-pdf-chapter-cache))))))))
 
-;; Attach this function to run automatically every time you flip a page
-(add-hook 'pdf-view-mode-hook
-          (lambda ()
-            (add-hook 'pdf-view-after-change-page-hook #'my-pdf-update-header-line nil t)
-            (my-pdf-update-header-line)))
+  ;; Attach this function to run automatically every time you flip a page
+  (add-hook 'pdf-view-mode-hook
+            (lambda ()
+              (add-hook 'pdf-view-after-change-page-hook #'my-pdf-update-header-line nil t)
+              ;; FIX 4: Delay the very first breadcrumb check by 0.5 seconds to 
+              ;; guarantee the server has finished starting up.
+              (run-with-timer 0.5 nil #'my-pdf-update-header-line))))
 
 ;; Bind "O" in Evil normal mode to open the PDF outline
 (with-eval-after-load 'pdf-tools
   (with-eval-after-load 'evil
     (evil-define-key 'normal pdf-view-mode-map (kbd "O") #'pdf-outline)))
+
+(use-package saveplace-pdf-view
+  :after pdf-tools)
 
 ;; ==========================================
 ;; 11. C/C++ LSP & Autocompletion (Clangd)
