@@ -454,74 +454,60 @@
   (pdf-tools-install t)
   
   ;; Turn on Emacs' built-in memory for where your cursor was
-  (save-place-mode 1)
+  (save-place-mode 1))
 
   ;; ==========================================
-  ;; Show Current PDF Chapter Hierarchy (Breadcrumbs)
+  ;; Show Full PDF Chapter Hierarchy (On-Demand)
   ;; ==========================================
- (with-no-warnings
-    (defvar-local my-pdf-chapter-cache (cons 0 "")))
 
-  (defun my-pdf-update-header-line ()
-    "Find current chapter hierarchy and show it in the top header line."
-    (ignore-errors
-      ;; FIX 3: Do NOT execute if the background server is still booting up!
-      (when (and (eq major-mode 'pdf-view-mode)
-                 (pdf-info-running-p))
-        (let ((current-page (pdf-view-current-page)))
-          (unless (eq current-page (car my-pdf-chapter-cache))
-            (let ((best-title "")
-                  (outline (pdf-info-outline))
-                  (path (make-vector 20 nil))
-                  (best-path-list nil)) 
-              
-              (when outline
-                (dolist (node outline)
-                  (let* ((node-page (alist-get 'page node))
-                         (node-depth (alist-get 'depth node))
-                         (raw-title (alist-get 'title node))
-                         (node-title (if (stringp raw-title)
-                                         (replace-regexp-in-string "[ \t\n\r]+" " " raw-title)
-                                       "")))
-                    (when (and (numberp node-page) 
-                               (<= node-page current-page)
-                               (numberp node-depth)
-                               (> node-depth 0))
-                      (when (>= node-depth (length path))
-                        (setq path (vconcat path (make-vector node-depth nil))))
-                      (aset path (1- node-depth) node-title)
-                      (let ((i node-depth))
-                        (while (< i (length path))
-                          (aset path i nil)
-                          (setq i (1+ i))))
-                      (setq best-path-list (append path nil)))))
-                
-                (when best-path-list
-                  (setq best-title 
-                        (mapconcat #'identity 
-                                   (delq nil (mapcar (lambda (x) (and (stringp x) (not (string-empty-p x)) x)) 
-                                                     best-path-list)) 
-                                   " ➔ "))))
-              
-              (setq my-pdf-chapter-cache (cons current-page best-title))))
+(defun my/pdf-show-full-path ()
+  "Show the full chapter hierarchy for the current PDF page.
+Displays the calculated breadcrumb path in the echo area."
+  (interactive)
+    (if (not (and (eq major-mode 'pdf-view-mode)
+                  (pdf-info-running-p)))
+        (message "PDF server is not ready or not in a PDF buffer.")
+      (let ((current-page (pdf-view-current-page))
+            (outline (pdf-info-outline))
+            (path (make-vector 20 nil))
+            (best-path-list nil))
+        (if (not outline)
+            (message "No outline (table of contents) found for this PDF.")
+          (dolist (node outline)
+            (let* ((node-page (alist-get 'page node))
+                   (node-depth (alist-get 'depth node))
+                   (raw-title (alist-get 'title node))
+                   (node-title (if (stringp raw-title)
+                                   (replace-regexp-in-string "[ \t\n\r]+" " " raw-title)
+                                 "")))
+              (when (and (numberp node-page) 
+                         (<= node-page current-page)
+                         (numberp node-depth)
+                         (> node-depth 0))
+                (when (>= node-depth (length path))
+                  (setq path (vconcat path (make-vector node-depth nil))))
+                (aset path (1- node-depth) node-title)
+                (let ((i node-depth))
+                  (while (< i (length path))
+                    (aset path i nil)
+                    (setq i (1+ i))))
+                (setq best-path-list (append path nil)))))
           
-          (setq header-line-format
-                (if (string-empty-p (cdr my-pdf-chapter-cache))
-                    nil 
-                  (format "  📖 %s " (cdr my-pdf-chapter-cache))))))))
+          (let ((best-title (when best-path-list
+                              (mapconcat #'identity 
+                                         (delq nil (mapcar (lambda (x) (and (stringp x) (not (string-empty-p x)) x)) 
+                                                           best-path-list)) 
+                                         " ➔ "))))
+            (if (or (null best-title) (string-empty-p best-title))
+                (message "Page %d is not inside any chapter." current-page)
+              ;; Display in echo area (will expand multi-line automatically if long)
+              (message best-title)))))))
 
-  ;; Attach this function to run automatically every time you flip a page
-  (add-hook 'pdf-view-mode-hook
-            (lambda ()
-              (add-hook 'pdf-view-after-change-page-hook #'my-pdf-update-header-line nil t)
-              ;; FIX 4: Delay the very first breadcrumb check by 0.5 seconds to 
-              ;; guarantee the server has finished starting up.
-              (run-with-timer 0.5 nil #'my-pdf-update-header-line))))
-
-;; Bind "O" in Evil normal mode to open the PDF outline
+;; Bind "O" to Outline and "P" to show the Full Path
 (with-eval-after-load 'pdf-tools
   (with-eval-after-load 'evil
-    (evil-define-key 'normal pdf-view-mode-map (kbd "O") #'pdf-outline)))
+    (evil-define-key 'normal pdf-view-mode-map (kbd "O") #'pdf-outline)
+    (evil-define-key 'normal pdf-view-mode-map (kbd "P") #'my/pdf-show-full-path)))
 
 (use-package saveplace-pdf-view
   :after pdf-tools)
