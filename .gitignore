@@ -21,4 +21,5 @@ elfeed.org~
 url/
 .#init.el
 .gitignore
+*.point
 speed-dial.sqlite

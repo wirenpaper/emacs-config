@@ -710,3 +710,221 @@ Displays the calculated breadcrumb path in the echo area."
             (lambda ()
               (evil-local-set-key 'normal (kbd "C-o") 'ignore)
               (evil-local-set-key 'motion (kbd "C-o") 'ignore))))
+
+;; ==========================================
+;; Make Emacs Auto-Saves act EXACTLY like Vim Swap Files
+;; ==========================================
+
+(require 'cl-lib)
+
+;; ==========================================
+;; 1. NUKE THE 1-SECOND PAUSE
+;; ==========================================
+(defun my/fast-after-find-file (orig-fn &rest args)
+  "Bypass the hardcoded 1-second pause when opening files."
+  (cl-letf (((symbol-function 'sit-for) #'ignore))
+    (apply orig-fn args)))
+
+(advice-add 'after-find-file :around #'my/fast-after-find-file)
+
+;; ==========================================
+;; 2. AIRTIGHT VIM-STYLE AUTO-SAVE ENGINE + CURSOR TRACKING
+;; ==========================================
+;; Trigger 1: The 0.5-Second Background Loop
+(defvar my/vim-idle-timer nil)
+(when my/vim-idle-timer (cancel-timer my/vim-idle-timer))
+
+(setq my/vim-idle-timer
+      (run-with-idle-timer 0.5 t 
+                           (lambda ()
+                             (let ((inhibit-message t))
+                               (do-auto-save t nil)))))
+
+;; Trigger 2: The Continuous Typing Interceptor (Every 20 chars)
+(defvar-local my/auto-save-keystroke-count 0)
+
+(defun my/auto-save-on-typing (&rest _)
+  (setq my/auto-save-keystroke-count (1+ my/auto-save-keystroke-count))
+  (when (>= my/auto-save-keystroke-count 20)
+    (setq my/auto-save-keystroke-count 0)
+    (let ((inhibit-message t))
+      (do-auto-save t t))))
+
+(add-hook 'after-change-functions #'my/auto-save-on-typing)
+
+;; Trigger 3: Instant swap creation on the first character
+(defun my/instant-vim-swap-on-first-keystroke ()
+  (when buffer-file-name
+    (let ((inhibit-message t))
+      (do-auto-save t t))))
+
+(add-hook 'first-change-hook #'my/instant-vim-swap-on-first-keystroke)
+
+;; NEW: Force Emacs to save the cursor position to a side-car file during auto-saves!
+(defun my/save-point-during-auto-save (&rest _)
+  "Save cursor position to a side-car file.
+This is necessary because Emacs plain-text auto-saves do not store it."
+  (when (and buffer-file-name buffer-auto-save-file-name)
+    (ignore-errors
+      (write-region (number-to-string (point)) nil 
+                    (concat buffer-auto-save-file-name ".point") nil 'silent))))
+
+(advice-add 'do-auto-save :after #'my/save-point-during-auto-save)
+
+;; ==========================================
+;; 3. QUIET VIM-STYLE RECOVERY (RESTORING TEXT & CRASH CURSOR)
+;; ==========================================
+(defun my/vim-style-quiet-recovery-prompt ()
+  "Prompt for recovery in the minibuffer only, and restore exact crash cursor."
+  (when (and buffer-file-name
+             buffer-auto-save-file-name
+             (file-exists-p buffer-auto-save-file-name)
+             (file-newer-than-file-p buffer-auto-save-file-name buffer-file-name))
+    (run-with-idle-timer 0.1 nil
+                         (lambda (buf)
+                           (when (buffer-live-p buf)
+                             (with-current-buffer buf
+                               (if (y-or-n-p "Recover from auto-save file? ")
+                                   (let ((fallback-point (point))
+                                         (point-file (concat buffer-auto-save-file-name ".point"))
+                                         (crash-point nil))
+                                     
+                                     ;; 1. Try to read the exact cursor position from the side-car file
+                                     (when (file-exists-p point-file)
+                                       (with-temp-buffer
+                                         (insert-file-contents point-file)
+                                         (setq crash-point (string-to-number (buffer-string)))))
+                                     
+                                     ;; 2. Recover the text seamlessly
+                                     (insert-file-contents buffer-auto-save-file-name nil nil nil t)
+                                     
+                                     ;; 3. Put the cursor EXACTLY where it was during the crash
+                                     (if (and crash-point (> crash-point 0) (<= crash-point (point-max)))
+                                         (goto-char crash-point)
+                                       (goto-char fallback-point))
+                                     
+                                     (set-buffer-modified-p t)
+                                     (message "Recovered successfully."))
+                                 
+                                 ;; If 'n' is pressed, trash the auto-save AND the side-car cursor file
+                                 (when (y-or-n-p "Delete the orphaned auto-save file? ")
+                                   (delete-file buffer-auto-save-file-name)
+                                   (when (file-exists-p (concat buffer-auto-save-file-name ".point"))
+                                     (delete-file (concat buffer-auto-save-file-name ".point")))
+                                   (message "Auto-save file deleted."))))))
+                         (current-buffer))))
+
+(add-hook 'find-file-hook #'my/vim-style-quiet-recovery-prompt)
+
+;; ==========================================
+;; 4. UNBYPASSABLE CLEANUP & VIM :q / :q! GUARDRAILS
+;; ==========================================
+(defun my/assassinate-autosave ()
+  "Deletes the auto-save file, the point file, and unlinks them."
+  (when buffer-auto-save-file-name
+    (when (file-exists-p buffer-auto-save-file-name)
+      (ignore-errors (delete-file buffer-auto-save-file-name)))
+    (when (file-exists-p (concat buffer-auto-save-file-name ".point"))
+      (ignore-errors (delete-file (concat buffer-auto-save-file-name ".point"))))
+    ;; CRUCIAL: Give Emacs amnesia
+    (setq buffer-auto-save-file-name nil)))
+
+;; Intercept Evil's :q and :q! directly
+(defun my/evil-quit-cleanup (orig-fn &optional force)
+  "Mimic Vim's :q and :q! by refusing to exit or prompt if files are unsaved."
+  (let* ((windows-left (length (window-list)))
+         (is-last-window (<= windows-left 1))
+         ;; Find any modified files that are NOT the current buffer
+         (other-modified-buffers
+          (cl-remove-if-not
+           (lambda (buf)
+             (and (buffer-modified-p buf)
+                  (buffer-file-name buf)
+                  (not (eq buf (current-buffer)))))
+           (buffer-list))))
+    
+    (if force
+        ;; =====================
+        ;; HANDLE :q! (FORCE QUIT)
+        ;; =====================
+        (progn
+          ;; 1. VIM GUARDRAIL: Refuse to exit entirely if OTHER files have unsaved changes
+          (when (and is-last-window other-modified-buffers)
+            (let ((first-other (buffer-name (car other-modified-buffers))))
+              (user-error "E162: No write since last change for buffer \"%s\". Use :qa! to discard all." first-other)))
+          
+          ;; 2. Safe to proceed: nuke the CURRENT buffer's autosave
+          (my/assassinate-autosave)
+          ;; 3. Trick Emacs into thinking this buffer is saved so it discards changes
+          (set-buffer-modified-p nil)
+          
+          ;; 4. Execute the quit command silently (ignore background processes)
+          (let ((confirm-kill-processes nil))
+            (funcall orig-fn force)))
+      
+      ;; =====================
+      ;; HANDLE :q (NORMAL QUIT)
+      ;; =====================
+      (progn
+        ;; 1. If the CURRENT buffer is modified, instantly block :q (NO PROMPTS!)
+        (when (and (buffer-modified-p) (buffer-file-name))
+          (user-error "E37: No write since last change (add ! to override)"))
+        
+        ;; 2. If it's the last window and OTHER buffers are modified, block :q
+        (when (and is-last-window other-modified-buffers)
+          (let ((first-other (buffer-name (car other-modified-buffers))))
+            (user-error "E162: No write since last change for buffer \"%s\"" first-other)))
+        
+        ;; 3. Safe to proceed! Execute quit with NO interactive conversations.
+        ;; Everything is guaranteed saved at this point. We also squelch process warnings.
+        (let ((confirm-kill-processes nil))
+          (funcall orig-fn force))))))
+
+(advice-add 'evil-quit :around #'my/evil-quit-cleanup)
+
+;; General hooks for standard buffer kills
+(defun my/unbypassable-buffer-cleanup (&optional buffer-or-name &rest _)
+  (let ((buf (get-buffer (or buffer-or-name (current-buffer)))))
+    (when (and buf (buffer-live-p buf))
+      (with-current-buffer buf (my/assassinate-autosave)))))
+
+(advice-add 'kill-buffer :before #'my/unbypassable-buffer-cleanup)
+
+;; Catch-all for :qa! or normal exits
+(advice-add 'kill-emacs :before (lambda (&rest _) 
+                                  (dolist (buf (buffer-list))
+                                    (with-current-buffer buf (my/assassinate-autosave)))))
+
+;; ==========================================
+;; 5. HOUSEKEEPING & CLEAN EXITS
+;; ==========================================
+
+;; 1. NUKE THE TILDA (~) FILES
+;; We use Git and our bulletproof auto-save. We do not need file.txt~ clutter.
+(setq make-backup-files nil)
+
+;; 2. NUKE THE LOCKFILES (.#filename)
+;; Emacs creates weird symlinks to track if someone else is editing the file.
+;; They annoyingly show up in tree explorers. Kill them.
+(setq create-lockfiles nil)
+
+;; 3. CLEAN UP SIDECARS ON NORMAL SAVE (:w)
+;; When you properly save a file, Emacs natively deletes the #autosave# file, 
+;; but it leaves our custom .point file behind. This sweeps it up.
+(defun my/cleanup-sidecar-on-normal-save ()
+  "Delete the .point side-car file when the buffer is properly saved."
+  (when buffer-auto-save-file-name
+    (let ((point-file (concat buffer-auto-save-file-name ".point")))
+      (when (file-exists-p point-file)
+        (ignore-errors (delete-file point-file))))))
+
+(add-hook 'after-save-hook #'my/cleanup-sidecar-on-normal-save)
+
+;; 4. CLEAN UP ON KILL-BUFFER (Just in case)
+;; If you kill a buffer that is fully saved and clean, make sure 
+;; no ghost .point files are lingering in the directory.
+(defun my/cleanup-sidecar-on-kill ()
+  (unless (buffer-modified-p)
+    (my/cleanup-sidecar-on-normal-save)))
+
+(add-hook 'kill-buffer-hook #'my/cleanup-sidecar-on-kill)
