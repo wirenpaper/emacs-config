@@ -527,6 +527,11 @@ Displays the calculated breadcrumb path in the echo area."
 ;; 11. C/C++ LSP & Autocompletion (Clangd)
 ;; ==========================================
 
+;; Add this before your Corfu and Eglot configs
+(use-package yasnippet
+  :config
+  (yas-global-mode 1))
+
 ;; Tell Emacs that .cppm files are C++ files so they get colors and LSP
 (add-to-list 'auto-mode-alist '("\\.cppm\\'" . c++-mode))
 
