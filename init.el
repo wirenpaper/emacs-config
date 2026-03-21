@@ -611,17 +611,20 @@ Displays the calculated breadcrumb path in the echo area."
     "Go to the last non-empty line, Vim style."
     :type line
     :jump t
-    (if count
-        (evil-goto-line count)
-      ;; If no count is given, go to the end of the buffer
-      (evil-goto-line)
-      ;; If we landed on a completely empty line at the end, step back one line
+    (let ((col (current-column))
+          (tgc temporary-goal-column))
+      (if count
+          (evil-goto-line count)
+        (evil-goto-line))
+      ;; If we landed in the empty void at the end, step back one line
       (when (and (eobp) (bolp) (not (bobp)))
         (forward-line -1)
-        (evil-first-non-blank))))
+        ;; Instead of snapping to the first letter, perfectly preserve the visual column!
+        (move-to-column col)
+        (setq temporary-goal-column tgc))))
 
   ;; Bind our new 'G' in Evil's motion state (so dG, yG, etc., all still work perfectly)
-(evil-define-key 'motion 'global (kbd "G") 'my/evil-goto-line-vim-behavior))
+  (evil-define-key 'motion 'global (kbd "G") 'my/evil-goto-line-vim-behavior))
 ;; ==========================================
 ;; Stop 'j' from stepping into the EOF void
 ;; ==========================================
@@ -632,12 +635,17 @@ Displays the calculated breadcrumb path in the echo area."
 ;; 2. Tell Evil to bounce back if it steps onto the empty POSIX newline
 (defun my/evil-avoid-eof-newline (orig-fun &rest args)
   "Prevent `j' from stepping into the empty POSIX newline at buffer end."
-  (apply orig-fun args)
-  (when (and (eobp) (bolp) (not (bobp)))
-    ;; We stepped into the void! Undo the movement by going up 1 line.
-    ;; Using the original function with -1 flawlessly preserves the cursor column.
-    (apply orig-fun '(-1))
-    (message "End of file")))
+  (let ((tgc temporary-goal-column)
+        (col (current-column)))
+    (apply orig-fun args)
+    (when (and (eobp) (bolp) (not (bobp)))
+      ;; We stepped into the void! Undo it with raw Lisp so Evil doesn't corrupt the column
+      (forward-line -1)
+      ;; Warp back to the exact column you were on
+      (move-to-column col)
+      ;; Secretly restore the goal column so pressing 'k' remembers your original long line
+      (setq temporary-goal-column tgc)
+      (message "End of file"))))
 
 ;; Apply this rule to both standard 'j' and visual-line 'j'
 (advice-add 'evil-next-line :around #'my/evil-avoid-eof-newline)
@@ -659,3 +667,31 @@ Displays the calculated breadcrumb path in the echo area."
     (back-to-indentation)))
 
 (add-hook 'post-command-hook #'my/evil-rescue-from-eof-void)
+
+;; ==========================================
+;; Close PDF Outline windows with ESC / C-[
+;; ==========================================
+
+(with-eval-after-load 'pdf-outline
+  ;; When in the PDF Outline buffer, make Escape and Ctrl-[ close the window
+  (evil-define-key 'normal pdf-outline-buffer-mode-map
+    (kbd "<escape>") 'quit-window
+    (kbd "C-[") 'quit-window))
+
+;; ==========================================
+;; Disable Vim jumping motions inside PDFs (Bulletproof)
+;; ==========================================
+
+(with-eval-after-load 'pdf-tools
+  ;; 1. Disable gg and G on the mode map level
+  (evil-define-key '(normal motion) pdf-view-mode-map
+    (kbd "G")   'ignore
+    (kbd "gg")  'ignore)
+  
+  ;; 2. C-o is stubborn and often hijacked by Evil's global jump list 
+  ;; or evil-collection. We must forcefully disable it at the absolute 
+  ;; local buffer level the moment the PDF opens.
+  (add-hook 'pdf-view-mode-hook
+            (lambda ()
+              (evil-local-set-key 'normal (kbd "C-o") 'ignore)
+              (evil-local-set-key 'motion (kbd "C-o") 'ignore))))
