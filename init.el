@@ -385,7 +385,7 @@
 
 (use-package ef-themes
   :config
-  (load-theme 'ef-cherie t)
+  (load-theme 'ef-orange t)
   (evil-define-key 'normal 'global
     (kbd "<leader> t s") 'ef-themes-select
     (kbd "<leader> t t") 'ef-themes-toggle))
@@ -513,6 +513,17 @@ Displays the calculated breadcrumb path in the echo area."
   :after pdf-tools)
 
 ;; ==========================================
+;; Allow Evil Leader (Spacebar) to work in PDFs
+;; ==========================================
+(with-eval-after-load 'pdf-tools
+  ;; 1. Unbind Emacs' default scroll-down behavior for Spacebar
+  (define-key pdf-view-mode-map (kbd "SPC") nil)
+  
+  (with-eval-after-load 'evil
+    ;; 2. Explicitly tell Evil to let the global leader pass through in PDF mode
+    (evil-define-key 'normal pdf-view-mode-map (kbd "SPC") nil)))
+
+;; ==========================================
 ;; 11. C/C++ LSP & Autocompletion (Clangd)
 ;; ==========================================
 
@@ -580,3 +591,71 @@ Displays the calculated breadcrumb path in the echo area."
 ;; Add this function to the hooks for C and C++ modes
 (add-hook 'c-mode-hook 'my/c-c++-hook)
 (add-hook 'c++-mode-hook 'my/c-c++-hook)
+
+;; ==========================================
+;; 12. Vim-like Scrolling and End-of-Buffer
+;; ==========================================
+
+;; 1. Stop Emacs from jumping half-a-page when hitting the bottom of the screen.
+;; Setting this above 100 forces Emacs to only scroll 1 line at a time.
+(setq scroll-conservatively 101)
+(setq scroll-preserve-screen-position t)
+
+;; 2. Show Vim-like markers in the left fringe for the "void" past the end of the file.
+;; (In Vim this is the ~ character, in Emacs it's a graphical line).
+(setq-default indicate-empty-lines t)
+
+;; 3. Redefine 'G' to ignore the empty POSIX newline at the end of the file
+(with-eval-after-load 'evil
+  (evil-define-motion my/evil-goto-line-vim-behavior (count)
+    "Go to the last non-empty line, Vim style."
+    :type line
+    :jump t
+    (if count
+        (evil-goto-line count)
+      ;; If no count is given, go to the end of the buffer
+      (evil-goto-line)
+      ;; If we landed on a completely empty line at the end, step back one line
+      (when (and (eobp) (bolp) (not (bobp)))
+        (forward-line -1)
+        (evil-first-non-blank))))
+
+  ;; Bind our new 'G' in Evil's motion state (so dG, yG, etc., all still work perfectly)
+(evil-define-key 'motion 'global (kbd "G") 'my/evil-goto-line-vim-behavior))
+;; ==========================================
+;; Stop 'j' from stepping into the EOF void
+;; ==========================================
+
+;; 1. Never add new lines automatically when holding 'j' at the bottom
+(setq next-line-add-newlines nil)
+
+;; 2. Tell Evil to bounce back if it steps onto the empty POSIX newline
+(defun my/evil-avoid-eof-newline (orig-fun &rest args)
+  "Prevent `j' from stepping into the empty POSIX newline at buffer end."
+  (apply orig-fun args)
+  (when (and (eobp) (bolp) (not (bobp)))
+    ;; We stepped into the void! Undo the movement by going up 1 line.
+    ;; Using the original function with -1 flawlessly preserves the cursor column.
+    (apply orig-fun '(-1))
+    (message "End of file")))
+
+;; Apply this rule to both standard 'j' and visual-line 'j'
+(advice-add 'evil-next-line :around #'my/evil-avoid-eof-newline)
+(advice-add 'evil-next-visual-line :around #'my/evil-avoid-eof-newline)
+;; ==========================================
+;; Rescue the cursor from the EOF void globally
+;; ==========================================
+
+(defun my/evil-rescue-from-eof-void ()
+  "Rescue cursor if dropped into EOF void by commands like `dd' or `p'."
+  (when (and (evil-normal-state-p)
+             (eobp)
+             (bolp)
+             (not (bobp)))
+    ;; Step back up to the actual text
+    (forward-line -1)
+    ;; Vim's default behavior when deleting the last line is to snap the 
+    ;; cursor to the first non-blank character. This perfectly replicates it!
+    (back-to-indentation)))
+
+(add-hook 'post-command-hook #'my/evil-rescue-from-eof-void)
