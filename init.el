@@ -541,6 +541,16 @@ Displays the calculated breadcrumb path in the echo area."
   :init
   (global-corfu-mode)
   :config
+  ;; ---------- THE FIX IS HERE ----------
+  ;; 1. Stop Corfu from stealing the Enter key
+  (define-key corfu-map (kbd "RET") nil)
+  (define-key corfu-map (kbd "<return>") nil)
+
+  ;; 2. Make TAB accept the selected autocomplete suggestion
+  (define-key corfu-map (kbd "TAB") #'corfu-insert)
+  (define-key corfu-map (kbd "<tab>") #'corfu-insert)
+  ;; -------------------------------------
+
   (with-eval-after-load 'evil
     (define-key corfu-map (kbd "C-j") 'corfu-next)
     (define-key corfu-map (kbd "C-k") 'corfu-previous)))
