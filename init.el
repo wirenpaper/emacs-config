@@ -45,6 +45,7 @@
 (declare-function evil-org-agenda-set-keys "evil-org-agenda")
 ;; Fix for PDF Tools compiler warnings:
 (declare-function pdf-info-outline "pdf-info")
+(declare-function pdf-info-running-p "pdf-info")
 (declare-function image-mode-window-get "image-mode")
 ;; Fix for Eglot/JSONRPC warnings:
 (declare-function jsonrpc--log-event "jsonrpc")
