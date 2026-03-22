@@ -195,7 +195,6 @@
          (name (if buffer-file-name (file-name-nondirectory buffer-file-name) (car record)))
          (data-str (prin1-to-string (cdr record))))
     
-    ;; Prevent duplicates in the same tag! Remove old entry if this file was already in this tag.
     (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag name))
     
     (let* ((used-slots (mapcar #'car (sqlite-select my/sd-db "SELECT slot FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
@@ -255,10 +254,12 @@
                ((and exp-path (not (file-directory-p exp-path)))
                 ;; Use find-file for actual files so save-place-mode handles cursor position!
                 (let ((buf (find-buffer-visiting exp-path)))
-                  (if buf (switch-to-buffer buf) (find-file exp-path))))
+                  (if buf (switch-to-buffer buf) (find-file exp-path)))
+                (my/refresh-speed-dial-hud)) ;; EXPLICIT FORCE UPDATE FOR PDFs
                (t 
                 ;; Let Emacs's bookmark engine handle Magit, Dired, etc.
-                (bookmark-jump (cons name data)))))
+                (bookmark-jump (cons name data))
+                (my/refresh-speed-dial-hud)))) ;; EXPLICIT FORCE UPDATE FOR PDFs
           (message "Empty slot")))
 
        ;; --- TAG MODE (NON-DESTRUCTIVE CASCADE) ---
@@ -359,8 +360,7 @@
 
   GLOBAL (Left Hand)                DYNAMIC (Right Hand)
   [a]: %-22s  [j]: %-22s
-  [s]: %-22s  [k]: %-22s[d]: %-22s  [l]: %-22s
-  [f]: %-22s  [;]: %-22s
+  [s]: %-22s  [k]: %-22s[d]: %-22s  [l]: %-22s[f]: %-22s  [;]: %-22s
   [z]: %-22s[m]: %-22s
   [x]: %-22s  [,]: %-22s                      
   [c]: %-22s  [.]: %-22s
@@ -473,7 +473,7 @@
             (setq my/current-speed-dial-tag new-tag)
             (my/save-workspace-tag root new-tag))
           (my/refresh-speed-dial-hud)
-          (message "Renamed tag [%s] to [%s]!" old-tag new-tag)))))
+          (message "Renamed tag [%s] to[%s]!" old-tag new-tag)))))
   (hydra-speed-dial/body))
 
 (defun my/hydra-copy-tag ()
@@ -629,7 +629,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 ;; ==========================================
 (my/load-global-workspace-state)
 
-;; Ensure subr-x is loaded for string-trim-right
+;; Ensure subr-x is loaded for string trimming
 (require 'subr-x)
 
 ;; ==========================================
@@ -644,13 +644,22 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
   (let* ((items (cl-loop for i from 1 to 8
                          for k in keys
                          for raw-name = (my/sd-name side i)
-                         for clean-name = (string-trim-right raw-name)
+                         ;; Strip all invisible text properties and accidental spaces
+                         for clean-name = (string-trim (substring-no-properties raw-name))
                          unless (string= clean-name "-")
                          collect 
-                         ;; --- DYNAMIC MATCHING LOGIC ---
-                         (let* ((is-active (or (and active-buf (string= clean-name active-buf))
-                                               (and active-file (string= clean-name active-file))
-                                               (and active-file (string= clean-name (file-name-nondirectory active-file)))))
+                         ;; --- DYNAMIC MATCHING LOGIC (BULLETPROOF) ---
+                         (let* ((b-name (and active-buf (substring-no-properties active-buf)))
+                                (f-name (and active-file (file-name-nondirectory (substring-no-properties active-file))))
+                                
+                                ;; Detect if my/sd-name truncated this string with the "…" symbol
+                                (is-truncated (string-suffix-p "…" clean-name))
+                                (base-name (if is-truncated (substring clean-name 0 -1) clean-name))
+                                
+                                ;; Check if buffer name OR file name matches (handles PDF tools and text properties)
+                                (is-active (or (and b-name (if is-truncated (string-prefix-p base-name b-name) (string= base-name b-name)))
+                                               (and f-name (if is-truncated (string-prefix-p base-name f-name) (string= base-name f-name)))))
+                                
                                 ;; Swap ) for -> if active
                                 (sep (if is-active "→" ")"))
                                 ;; Keep your custom blue highlight style
