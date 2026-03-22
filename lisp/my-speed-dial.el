@@ -595,6 +595,118 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 ;; ==========================================
 (my/load-global-workspace-state)
 
+;; Ensure subr-x is loaded for string-trim-right
+(require 'subr-x)
+
+;; Ensure subr-x is loaded for string-trim-right
+(require 'subr-x)
+
+;; ==========================================
+;; 8.5 PERSISTENT TMUX-STYLE HUD (FLAWLESS)
+;; ==========================================
+
+(defvar my/speed-dial-hud-buffer-name " *Speed-Dial-HUD*")
+
+(defun my/speed-dial-hud-content ()
+  "Generates a pure horizontal HUD, exactly 1 space between items, exact text height."
+  (let* ((keys '("j" "k" "l" ";" "m" "," "." "/"))
+         ;; Fetch items and aggressively strip ALL spaces using string-trim-right
+         (items (cl-loop for i from 1 to 8
+                         for k in keys
+                         for raw-name = (my/sd-name 'right i)
+                         for clean-name = (string-trim-right raw-name)
+                         unless (string= clean-name "-")
+                         collect (format "%s) %s" 
+                                         (propertize k 'face '(:weight bold :foreground "blue")) 
+                                         clean-name)))
+         ;; Subtract 4 to be absolutely immune to scrollbar/fringe edge-cases
+         (max-width (- (frame-width) 4))
+         (current-len 0)
+         (body "")) 
+
+    (unless items
+      (setq items (list (propertize "[No files tagged]" 'face 'shadow))))
+
+    ;; Flexbox loop
+    (dolist (item items)
+      (let ((padded-item (concat item " "))) ;; EXACTLY 1 literal space added here
+        (if (> (+ current-len (length padded-item)) max-width)
+            (setq body (concat body "\n" padded-item)
+                  current-len (length padded-item))
+          (setq body (concat body padded-item)
+                current-len (+ current-len (length padded-item))))))
+
+    ;; Strip the final trailing newline/space so the text buffer is exactly 1 or 2 lines tall
+    (string-trim-right body)))
+
+(defun my/refresh-speed-dial-hud ()
+  "Refreshes the HUD content dynamically."
+  (let ((win (get-buffer-window my/speed-dial-hud-buffer-name)))
+    (when win
+      (with-current-buffer my/speed-dial-hud-buffer-name
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (my/speed-dial-hud-content))
+          (goto-char (point-min))))
+      (let ((window-resize-pixelwise t) ;; Force exact pixel snap
+            (window-size-fixed nil)
+            (window-min-height 1))
+        (fit-window-to-buffer win nil 1)))))
+
+(defun my/toggle-speed-dial-hud ()
+  "Toggles the non-selectable Speed Dial HUD at the top of the screen."
+  (interactive)
+  (let ((buf (get-buffer my/speed-dial-hud-buffer-name)))
+    (if (and buf (get-buffer-window buf))
+        (delete-window (get-buffer-window buf))
+      (with-current-buffer (get-buffer-create my/speed-dial-hud-buffer-name)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (my/speed-dial-hud-content))
+          (goto-char (point-min)))
+        
+        ;; Strip ALL editor UI features
+        (read-only-mode 1)
+        (setq cursor-type nil)
+        (setq mode-line-format nil)
+        (setq header-line-format nil)
+        
+        ;; =======================================================
+        ;; KILLER FIXES FOR THE VERTICAL GAP:
+        ;; =======================================================
+        (setq-local truncate-lines t)                ;; 1. Prevent invisible trailing spaces from soft-wrapping
+        (setq-local word-wrap nil)                   ;; 2. Disable visual line mode spillover
+        (setq-local mode-require-final-newline nil)  ;; 3. Stop Emacs from silently appending an EOF newline
+        (setq-local require-final-newline nil)
+        
+        ;; Turn off fringes, margins, and the "small dashes" empty line indicators
+        (setq left-fringe-width 0)
+        (setq right-fringe-width 0)
+        (setq left-margin-width 0)
+        (setq right-margin-width 0)
+        (setq indicate-empty-lines nil)
+        (setq indicate-buffer-boundaries nil)
+        
+        ;; Force line numbers OFF
+        (when (bound-and-true-p display-line-numbers-mode)
+          (display-line-numbers-mode -1))
+        (setq display-line-numbers nil))
+        
+      ;; 4. Dynamically bind pixel-perfect resizing so display-buffer respects it natively
+      (let ((window-resize-pixelwise t) 
+            (window-size-fixed nil))
+        (let ((win (display-buffer my/speed-dial-hud-buffer-name
+                                   '((display-buffer-in-side-window)
+                                     (side . top)
+                                     ;; Natively auto-size during window creation
+                                     (window-height . fit-window-to-buffer) 
+                                     (window-parameters . ((no-other-window . t)
+                                                           (no-delete-other-windows . t)))))))
+          ;; Explicitly force the window to shrink AFTER it is drawn
+          (when win
+            (let ((window-min-height 1))
+              (fit-window-to-buffer win nil 1))))))))
+
 ;; ==========================================
 ;; 9. KEYBINDINGS
 ;; ==========================================
