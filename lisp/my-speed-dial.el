@@ -204,7 +204,7 @@
         (message "Pinned '%s' to Slot %d on [%s]" name free-slot tag)))))
 
 ;; ==========================================
-;; 5. CORE SPEED DIAL LOGIC
+;; 5. CORE SPEED DIAL LOGIC (NON-DESTRUCTIVE)
 ;; ==========================================
 
 (defun my/sd-generate-record-for (target)
@@ -255,21 +255,33 @@
                 (bookmark-jump (cons name data)))))
           (message "Empty slot")))
 
-       ;; --- TAG MODE ---
+       ;; --- TAG MODE (NON-DESTRUCTIVE CASCADE) ---
        ((eq my/speed-dial-mode 'tag)
         (let* ((record (my/sd-generate-record-for my/pending-tag-target))
-               (name (if my/pending-tag-target (file-name-nondirectory my/pending-tag-target) (car record)))
-               (data-str (prin1-to-string (cdr record))))
+               (moving-name (if my/pending-tag-target (file-name-nondirectory my/pending-tag-target) (car record)))
+               (moving-data (prin1-to-string (cdr record))))
           
-          ;; Delete it from its OLD slot in this same tag (if it exists) to prevent duplication!
-          (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag name))
+          ;; 1. Prevent duplicates of this file from existing elsewhere in the tag
+          (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag moving-name))
           
-          ;; Insert into the requested slot
-          (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
-                          (list root tag num name data-str))
+          ;; 2. Cascade shift down (if the slot is occupied, bump the occupant to the next slot)
+          (let ((current-name moving-name)
+                (current-data moving-data))
+            (cl-loop for s from num to 8 do
+                     (let ((occupant (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
+                                                    (list root tag s))))
+                       ;; Place the current item in the slot
+                       (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
+                                       (list root tag s current-name current-data))
+                       ;; If the slot was occupied, hold the occupant for the next loop. Otherwise, we're done shifting!
+                       (if occupant
+                           (setq current-name (nth 0 (car occupant))
+                                 current-data (nth 1 (car occupant)))
+                         (cl-return)))))
+
           (setq my/speed-dial-mode 'normal
                 my/pending-tag-target nil)
-          (message "Tagged '%s' to slot %d on[%s]!" name num tag)
+          (message "Tagged '%s' to slot %d on [%s]!" moving-name num tag)
           (hydra-speed-dial/body)))
 
        ;; --- PICK MODE ---
@@ -280,24 +292,39 @@
           (setq my/speed-dial-mode 'drop))
         (hydra-speed-dial/body))
 
-       ;; --- DROP MODE ---
+       ;; --- DROP MODE (NON-DESTRUCTIVE CASCADE) ---
        ((eq my/speed-dial-mode 'drop)
         (let* ((old-tag (car my/pending-move-src))
                (old-slot (cdr my/pending-move-src))
                (old-row (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                                        (list root old-tag old-slot))))
           (when old-row
-            (let ((name (nth 0 (car old-row)))
-                  (data-str (nth 1 (car old-row))))
-              ;; If it somehow existed elsewhere in the DESTINATION tag, wipe it first to avoid duplicates
-              (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag name))
+            (let ((moving-name (nth 0 (car old-row)))
+                  (moving-data (nth 1 (car old-row))))
               
-              (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
-                              (list root tag num name data-str))
+              ;; 1. Wipe it from its old source slot immediately
+              (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
+                              (list root old-tag old-slot))
+
+              ;; 2. Ensure no duplicates of it exist in the target tag
               (unless (and (string= old-tag tag) (= old-slot num))
-                (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
-                                (list root old-tag old-slot)))
-              (message "Moved '%s' to slot %d on [%s]!" name num tag)))
+                (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" 
+                                (list root tag moving-name)))
+              
+              ;; 3. Cascade shift down (bump occupants down until an empty slot is found)
+              (let ((current-name moving-name)
+                    (current-data moving-data))
+                (cl-loop for s from num to 8 do
+                         (let ((occupant (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
+                                                        (list root tag s))))
+                           (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
+                                           (list root tag s current-name current-data))
+                           (if occupant
+                               (setq current-name (nth 0 (car occupant))
+                                     current-data (nth 1 (car occupant)))
+                             (cl-return)))))
+              
+              (message "Moved '%s' to slot %d on [%s] (shifted others down)!" moving-name num tag)))
           (setq my/speed-dial-mode 'normal
                 my/pending-move-src nil)
           (hydra-speed-dial/body)))
@@ -329,7 +356,7 @@
   >>>[TAG MODE] SEARCHING FOR FILE... PRESS A SLOT KEY AFTERWARDS <<<
 
   GLOBAL (Left Hand)                DYNAMIC (Right Hand)
-  [a]: %-22s  [j]: %-22s
+  [a]: %-22s[j]: %-22s
   [s]: %-22s  [k]: %-22s
   [d]: %-22s  [l]: %-22s
   [f]: %-22s  [;]: %-22s
@@ -598,9 +625,6 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 ;; Ensure subr-x is loaded for string-trim-right
 (require 'subr-x)
 
-;; Ensure subr-x is loaded for string-trim-right
-(require 'subr-x)
-
 ;; ==========================================
 ;; 8.5 PERSISTENT TMUX-STYLE HUD (TOP & BOTTOM)
 ;; ==========================================
@@ -694,6 +718,25 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
         (let ((window-min-height 1))
           (fit-window-to-buffer win nil 1))))))
 
+(defun my/hide-speed-dial-huds ()
+  "Force closes BOTH the top and bottom Tmux-style HUDs."
+  (let ((win-top (get-buffer-window my/speed-dial-hud-buffer-name))
+        (win-bot (get-buffer-window my/speed-dial-global-hud-buffer-name)))
+    (when win-top (delete-window win-top))
+    (when win-bot (delete-window win-bot))))
+
+(defun my/show-speed-dial-huds ()
+  "Force opens BOTH the top and bottom Tmux-style HUDs."
+  (my/hide-speed-dial-huds) ;; Prevent duplicates
+  (let ((active-buf (buffer-name))
+        (active-file (buffer-file-name)))
+    (my/setup-hud-window my/speed-dial-hud-buffer-name 
+                         (my/speed-dial-hud-content active-buf active-file) 
+                         'top)
+    (my/setup-hud-window my/speed-dial-global-hud-buffer-name 
+                         (my/speed-dial-global-hud-content active-buf active-file) 
+                         'bottom)))
+
 (defun my/refresh-speed-dial-hud ()
   "Refreshes BOTH HUD contents dynamically."
   (let ((win-top (get-buffer-window my/speed-dial-hud-buffer-name))
@@ -721,28 +764,6 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
       (let ((window-resize-pixelwise t) (window-size-fixed nil) (window-min-height 1))
         (fit-window-to-buffer win-bot nil 1)))))
 
-(defun my/toggle-speed-dial-hud ()
-  "Toggles BOTH the top (dynamic) and bottom (global) Speed Dial HUDs."
-  (interactive)
-  (let ((buf-top (get-buffer my/speed-dial-hud-buffer-name))
-        (buf-bot (get-buffer my/speed-dial-global-hud-buffer-name))
-        (active-buf (buffer-name))
-        (active-file (buffer-file-name)))
-        
-    ;; If EITHER is open, close BOTH of them
-    (if (or (and buf-top (get-buffer-window buf-top))
-            (and buf-bot (get-buffer-window buf-bot)))
-        (progn
-          (when (and buf-top (get-buffer-window buf-top)) (delete-window (get-buffer-window buf-top)))
-          (when (and buf-bot (get-buffer-window buf-bot)) (delete-window (get-buffer-window buf-bot))))
-      
-      ;; Otherwise, open BOTH
-      (my/setup-hud-window my/speed-dial-hud-buffer-name 
-                           (my/speed-dial-hud-content active-buf active-file) 
-                           'top)
-      (my/setup-hud-window my/speed-dial-global-hud-buffer-name 
-                           (my/speed-dial-global-hud-content active-buf active-file) 
-                           'bottom))))
 
 ;; ==========================================
 ;; 8.6 HUD AUTO-UPDATE HOOKS
@@ -762,6 +783,45 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 (add-hook 'window-selection-change-functions #'my/speed-dial-auto-refresh)
 (add-hook 'window-buffer-change-functions #'my/speed-dial-auto-refresh)
 
+
+;; ==========================================
+;; 8.7 MODE TOGGLES & HYDRA OVERRIDES
+;; ==========================================
+
+(defvar my/speed-dial-display-mode 'operational
+  "Visual mode for the speed dial. Can be 'tactical (Tmux bars) or 'operational (Hydra HUD).")
+
+(defun my/speed-dial-tactical-mode ()
+  "Switch to tactical mode: Persistent Tmux bars ON, huge Hydra HUD OFF."
+  (interactive)
+  (setq my/speed-dial-display-mode 'tactical)
+  (my/show-speed-dial-huds)
+  (message "Speed Dial: TACTICAL mode active."))
+
+(defun my/speed-dial-operational-mode ()
+  "Switch to operational mode: Persistent Tmux bars OFF, huge Hydra HUD ON."
+  (interactive)
+  (setq my/speed-dial-display-mode 'operational)
+  (my/hide-speed-dial-huds)
+  (message "Speed Dial: OPERATIONAL mode active."))
+
+(defun my/toggle-speed-dial-hud ()
+  "Quick-toggle between Tactical and Operational visual modes."
+  (interactive)
+  (if (eq my/speed-dial-display-mode 'operational)
+      (my/speed-dial-tactical-mode)
+    (my/speed-dial-operational-mode)))
+
+(defun my/speed-dial-hydra-display-override (orig-fun &rest args)
+  "Intercepts the Hydra call. If we are in 'tactical' mode, completely silences the visual HUD."
+  ;; hydra-is-helpful is a built-in hydra variable. Binding it to nil prevents the popup!
+  (let ((hydra-is-helpful (eq my/speed-dial-display-mode 'operational)))
+    (apply orig-fun args)))
+
+;; Attach the override directly to the hydra engine
+(advice-add 'hydra-speed-dial/body :around #'my/speed-dial-hydra-display-override)
+
+
 ;; ==========================================
 ;; 9. KEYBINDINGS
 ;; ==========================================
@@ -773,6 +833,10 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 (evil-define-key 'normal 'global (kbd "<leader> b p") 'my/project-bookmark-jump)
 (evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
 (evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
+
+;; 3. EVIL EX COMMANDS (Type :tactical or :operational in normal mode!)
+(evil-ex-define-cmd "tactical" 'my/speed-dial-tactical-mode)
+(evil-ex-define-cmd "operational" 'my/speed-dial-operational-mode)
 
 ;; ==========================================
 ;; my-speed-dial.el ends here
