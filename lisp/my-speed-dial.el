@@ -12,8 +12,9 @@
 (use-package evil :ensure t)
 (use-package hydra :ensure t)
 
-;; Tell the byte-compiler that this function will be generated later by `defhydra`
+;; Tell the byte-compiler about functions generated later
 (declare-function hydra-speed-dial/body "my-speed-dial")
+(declare-function my/refresh-speed-dial-hud "my-speed-dial")
 
 ;; ==========================================
 ;; 1. SQLITE DATABASE INITIALIZATION
@@ -142,7 +143,8 @@
     (my/save-global-workspace-state root)
     (if saved-tag
         (message "Workspace locked to: %s (Restored tag: [%s])" root saved-tag)
-      (message "Workspace locked to: %s" root))))
+      (message "Workspace locked to: %s" root))
+    (my/refresh-speed-dial-hud)))
 
 (defun my/set-speed-dial-tag ()
   "Choose a tag for the RIGHT hand keys in the locked workspace."
@@ -157,7 +159,8 @@
           (message "No custom tags found! Press 'C' to create one."))
       (setq my/current-speed-dial-tag (completing-read "Select tag for RIGHT hand: " other-tags))
       (my/save-workspace-tag root my/current-speed-dial-tag)
-      (message "Locked right hand to tag: [%s]" my/current-speed-dial-tag))))
+      (message "Locked right hand to tag:[%s]" my/current-speed-dial-tag)
+      (my/refresh-speed-dial-hud))))
 
 (defun my/project-bookmark-jump ()
   "Jump to any bookmark inside your manually locked workspace."
@@ -201,10 +204,11 @@
           (message "Tag[%s] is full! All 8 slots are used." tag)
         (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                         (list root tag free-slot name data-str))
-        (message "Pinned '%s' to Slot %d on [%s]" name free-slot tag)))))
+        (message "Pinned '%s' to Slot %d on[%s]" name free-slot tag)
+        (my/refresh-speed-dial-hud)))))
 
 ;; ==========================================
-;; 5. CORE SPEED DIAL LOGIC (NON-DESTRUCTIVE)
+;; 5. CORE SPEED DIAL LOGIC
 ;; ==========================================
 
 (defun my/sd-generate-record-for (target)
@@ -221,6 +225,7 @@
       (setq tag "main")
       (setq my/current-speed-dial-tag "main")
       (my/save-workspace-tag root "main")
+      (my/refresh-speed-dial-hud)
       (message "Auto-created default dynamic tag: [main]")))
 
   (if (not tag)
@@ -245,6 +250,7 @@
                ((and exp-path (not (file-exists-p exp-path)))
                 (message "Path '%s' no longer exists! Auto-cleaning slot..." exp-path)
                 (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" (list root tag num))
+                (my/refresh-speed-dial-hud)
                 (hydra-speed-dial/body))
                ((and exp-path (not (file-directory-p exp-path)))
                 ;; Use find-file for actual files so save-place-mode handles cursor position!
@@ -261,19 +267,15 @@
                (moving-name (if my/pending-tag-target (file-name-nondirectory my/pending-tag-target) (car record)))
                (moving-data (prin1-to-string (cdr record))))
           
-          ;; 1. Prevent duplicates of this file from existing elsewhere in the tag
           (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag moving-name))
           
-          ;; 2. Cascade shift down (if the slot is occupied, bump the occupant to the next slot)
           (let ((current-name moving-name)
                 (current-data moving-data))
             (cl-loop for s from num to 8 do
                      (let ((occupant (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                                                     (list root tag s))))
-                       ;; Place the current item in the slot
                        (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                                        (list root tag s current-name current-data))
-                       ;; If the slot was occupied, hold the occupant for the next loop. Otherwise, we're done shifting!
                        (if occupant
                            (setq current-name (nth 0 (car occupant))
                                  current-data (nth 1 (car occupant)))
@@ -281,6 +283,7 @@
 
           (setq my/speed-dial-mode 'normal
                 my/pending-tag-target nil)
+          (my/refresh-speed-dial-hud)
           (message "Tagged '%s' to slot %d on [%s]!" moving-name num tag)
           (hydra-speed-dial/body)))
 
@@ -302,16 +305,13 @@
             (let ((moving-name (nth 0 (car old-row)))
                   (moving-data (nth 1 (car old-row))))
               
-              ;; 1. Wipe it from its old source slot immediately
               (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                               (list root old-tag old-slot))
 
-              ;; 2. Ensure no duplicates of it exist in the target tag
               (unless (and (string= old-tag tag) (= old-slot num))
                 (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" 
                                 (list root tag moving-name)))
               
-              ;; 3. Cascade shift down (bump occupants down until an empty slot is found)
               (let ((current-name moving-name)
                     (current-data moving-data))
                 (cl-loop for s from num to 8 do
@@ -327,6 +327,7 @@
               (message "Moved '%s' to slot %d on [%s] (shifted others down)!" moving-name num tag)))
           (setq my/speed-dial-mode 'normal
                 my/pending-move-src nil)
+          (my/refresh-speed-dial-hud)
           (hydra-speed-dial/body)))
 
        ;; --- UNTAG MODE ---
@@ -336,6 +337,7 @@
           (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" (list root tag num))
           (message "Untagged slot %d from [%s]" num tag))
         (setq my/speed-dial-mode 'normal)
+        (my/refresh-speed-dial-hud)
         (hydra-speed-dial/body))))))
 
 ;; ==========================================
@@ -356,11 +358,10 @@
   >>>[TAG MODE] SEARCHING FOR FILE... PRESS A SLOT KEY AFTERWARDS <<<
 
   GLOBAL (Left Hand)                DYNAMIC (Right Hand)
-  [a]: %-22s[j]: %-22s
-  [s]: %-22s  [k]: %-22s
-  [d]: %-22s  [l]: %-22s
+  [a]: %-22s  [j]: %-22s
+  [s]: %-22s  [k]: %-22s[d]: %-22s  [l]: %-22s
   [f]: %-22s  [;]: %-22s
-  [z]: %-22s  [m]: %-22s
+  [z]: %-22s[m]: %-22s
   [x]: %-22s  [,]: %-22s                      
   [c]: %-22s  [.]: %-22s
   [v]: %-22s  [/]: %-22s
@@ -414,6 +415,7 @@
         (message "Cancelled: Tag name cannot be empty.")
       (setq my/current-speed-dial-tag new-tag)
       (my/save-workspace-tag (my/get-workspace) new-tag)
+      (my/refresh-speed-dial-hud)
       (message "Created and locked new tag: [%s]" new-tag)))
   (hydra-speed-dial/body))
 
@@ -430,6 +432,7 @@
         (when (string= my/current-speed-dial-tag tag-to-nuke) 
           (setq my/current-speed-dial-tag nil)
           (my/save-workspace-tag root nil))
+        (my/refresh-speed-dial-hud)
         (message "Wiped tag '%s'." tag-to-nuke))))
   (hydra-speed-dial/body))
 
@@ -445,6 +448,7 @@
         (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=?" (list root))
         (my/save-workspace-tag root nil)
         (setq my/current-speed-dial-tag nil)
+        (my/refresh-speed-dial-hud)
         (message "Workspace contents wiped successfully!"))))
   (hydra-speed-dial/body))
 
@@ -468,6 +472,7 @@
           (when (string= my/current-speed-dial-tag old-tag)
             (setq my/current-speed-dial-tag new-tag)
             (my/save-workspace-tag root new-tag))
+          (my/refresh-speed-dial-hud)
           (message "Renamed tag [%s] to [%s]!" old-tag new-tag)))))
   (hydra-speed-dial/body))
 
@@ -488,6 +493,7 @@
             (dolist (slot-row slots)
               (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                               (list root new-tag (nth 0 slot-row) (nth 1 slot-row) (nth 2 slot-row))))
+            (my/refresh-speed-dial-hud)
             (message "Copied layout of [%s] into[%s]!" old-tag new-tag))))))
   (hydra-speed-dial/body))
 
@@ -558,6 +564,7 @@
             (my/save-workspace-tag target-root source-tag)
             (setq my/current-speed-dial-tag source-tag)))
 
+        (my/refresh-speed-dial-hud)
         (message "Successfully pulled %d slots from '%s' into current workspace!" 
                  (length rows) (file-name-nondirectory (directory-file-name source-root-exp))))))
   (hydra-speed-dial/body))
