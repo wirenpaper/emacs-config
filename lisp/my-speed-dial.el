@@ -602,19 +602,17 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 (require 'subr-x)
 
 ;; ==========================================
-;; 8.5 PERSISTENT TMUX-STYLE HUD (FLAWLESS & DYNAMIC)
+;; 8.5 PERSISTENT TMUX-STYLE HUD (TOP & BOTTOM)
 ;; ==========================================
 
 (defvar my/speed-dial-hud-buffer-name " *Speed-Dial-HUD*")
+(defvar my/speed-dial-global-hud-buffer-name " *Speed-Dial-Global-HUD*")
 
-(defun my/speed-dial-hud-content (&optional active-buf active-file)
-  "Generates a pure horizontal HUD, exactly 1 space between items, exact text height.
-Highlights the item matching ACTIVE-BUF or ACTIVE-FILE with a '->'."
-  (let* ((keys '("j" "k" "l" ";" "m" "," "." "/"))
-         ;; Fetch items and aggressively strip ALL spaces using string-trim-right
-         (items (cl-loop for i from 1 to 8
+(defun my/sd-generate-hud-string (keys side active-buf active-file)
+  "Generates the flexbox string for a HUD bar, given the keys and the side (left/right)."
+  (let* ((items (cl-loop for i from 1 to 8
                          for k in keys
-                         for raw-name = (my/sd-name 'right i)
+                         for raw-name = (my/sd-name side i)
                          for clean-name = (string-trim-right raw-name)
                          unless (string= clean-name "-")
                          collect 
@@ -624,14 +622,13 @@ Highlights the item matching ACTIVE-BUF or ACTIVE-FILE with a '->'."
                                                (and active-file (string= clean-name (file-name-nondirectory active-file)))))
                                 ;; Swap ) for -> if active
                                 (sep (if is-active "→" ")"))
-                                ;; Make the active item pop with a green face
+                                ;; Keep your custom blue highlight style
                                 (key-face (if is-active '(:weight bold :foreground "blue") '(:weight bold :foreground "blue")))
                                 (text-face (if is-active '(:weight bold :background "blue" :foreground "white") nil)))
                            (format "%s%s %s"
                                    (propertize k 'face key-face)
                                    (propertize sep 'face key-face)
                                    (if text-face (propertize clean-name 'face text-face) clean-name)))))
-         
          ;; Subtract 4 to be absolutely immune to scrollbar/fringe edge-cases
          (max-width (- (frame-width) 4))
          (current-len 0)
@@ -642,104 +639,128 @@ Highlights the item matching ACTIVE-BUF or ACTIVE-FILE with a '->'."
 
     ;; Flexbox loop
     (dolist (item items)
-      (let ((padded-item (concat item " "))) ;; EXACTLY 1 literal space added here
+      (let ((padded-item (concat item " ")))
         (if (> (+ current-len (length padded-item)) max-width)
             (setq body (concat body "\n" padded-item)
                   current-len (length padded-item))
           (setq body (concat body padded-item)
                 current-len (+ current-len (length padded-item))))))
 
-    ;; Strip the final trailing newline/space so the text buffer is exactly 1 or 2 lines tall
     (string-trim-right body)))
 
+(defun my/speed-dial-hud-content (&optional active-buf active-file)
+  "Generates content for the TOP (Dynamic / Right Hand) HUD."
+  (my/sd-generate-hud-string '("j" "k" "l" ";" "m" "," "." "/") 'right active-buf active-file))
+
+(defun my/speed-dial-global-hud-content (&optional active-buf active-file)
+  "Generates content for the BOTTOM (Global / Left Hand) HUD."
+  (my/sd-generate-hud-string '("a" "s" "d" "f" "z" "x" "c" "v") 'left active-buf active-file))
+
+(defun my/setup-hud-window (buf-name content-string window-side)
+  "Helper that creates the buffer, strips UI, and snaps the window to the top or bottom."
+  (with-current-buffer (get-buffer-create buf-name)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert content-string)
+      (goto-char (point-min)))
+
+    ;; Strip ALL editor UI features
+    (read-only-mode 1)
+    (setq cursor-type nil mode-line-format nil header-line-format nil)
+    
+    ;; KILLER FIXES FOR THE VERTICAL GAP:
+    (setq-local truncate-lines t word-wrap nil
+                mode-require-final-newline nil require-final-newline nil)
+    
+    ;; Turn off fringes, margins, and the "small dashes"
+    (setq left-fringe-width 0 right-fringe-width 0
+          left-margin-width 0 right-margin-width 0
+          indicate-empty-lines nil indicate-buffer-boundaries nil)
+    
+    (when (bound-and-true-p display-line-numbers-mode)
+      (display-line-numbers-mode -1))
+    (setq display-line-numbers nil))
+    
+  ;; Dynamically bind pixel-perfect resizing
+  (let ((window-resize-pixelwise t) 
+        (window-size-fixed nil))
+    (let ((win (display-buffer buf-name
+                               `((display-buffer-in-side-window)
+                                 (side . ,window-side)
+                                 (window-height . fit-window-to-buffer) 
+                                 (window-parameters . ((no-other-window . t)
+                                                       (no-delete-other-windows . t)))))))
+      (when win
+        (let ((window-min-height 1))
+          (fit-window-to-buffer win nil 1))))))
+
 (defun my/refresh-speed-dial-hud ()
-  "Refreshes the HUD content dynamically."
-  (let ((win (get-buffer-window my/speed-dial-hud-buffer-name))
-        ;; Capture active buffer BEFORE shifting to HUD buffer
+  "Refreshes BOTH HUD contents dynamically."
+  (let ((win-top (get-buffer-window my/speed-dial-hud-buffer-name))
+        (win-bot (get-buffer-window my/speed-dial-global-hud-buffer-name))
         (active-buf (buffer-name))
         (active-file (buffer-file-name)))
-    (when win
+    
+    ;; Update Top
+    (when win-top
       (with-current-buffer my/speed-dial-hud-buffer-name
         (let ((inhibit-read-only t))
           (erase-buffer)
           (insert (my/speed-dial-hud-content active-buf active-file))
           (goto-char (point-min))))
-      (let ((window-resize-pixelwise t) ;; Force exact pixel snap
-            (window-size-fixed nil)
-            (window-min-height 1))
-        (fit-window-to-buffer win nil 1)))))
-
-(defun my/toggle-speed-dial-hud ()
-  "Toggles the non-selectable Speed Dial HUD at the top of the screen."
-  (interactive)
-  (let ((buf (get-buffer my/speed-dial-hud-buffer-name))
-        ;; Capture active buffer BEFORE creating HUD buffer
-        (active-buf (buffer-name))
-        (active-file (buffer-file-name)))
-    (if (and buf (get-buffer-window buf))
-        (delete-window (get-buffer-window buf))
-      (with-current-buffer (get-buffer-create my/speed-dial-hud-buffer-name)
+      (let ((window-resize-pixelwise t) (window-size-fixed nil) (window-min-height 1))
+        (fit-window-to-buffer win-top nil 1)))
+        
+    ;; Update Bottom
+    (when win-bot
+      (with-current-buffer my/speed-dial-global-hud-buffer-name
         (let ((inhibit-read-only t))
           (erase-buffer)
-          (insert (my/speed-dial-hud-content active-buf active-file))
-          (goto-char (point-min)))
+          (insert (my/speed-dial-global-hud-content active-buf active-file))
+          (goto-char (point-min))))
+      (let ((window-resize-pixelwise t) (window-size-fixed nil) (window-min-height 1))
+        (fit-window-to-buffer win-bot nil 1)))))
 
-        ;; Strip ALL editor UI features
-        (read-only-mode 1)
-        (setq cursor-type nil)
-        (setq mode-line-format nil)
-        (setq header-line-format nil)
+(defun my/toggle-speed-dial-hud ()
+  "Toggles BOTH the top (dynamic) and bottom (global) Speed Dial HUDs."
+  (interactive)
+  (let ((buf-top (get-buffer my/speed-dial-hud-buffer-name))
+        (buf-bot (get-buffer my/speed-dial-global-hud-buffer-name))
+        (active-buf (buffer-name))
+        (active-file (buffer-file-name)))
         
-        ;; KILLER FIXES FOR THE VERTICAL GAP:
-        (setq-local truncate-lines t)                ;; 1. Prevent invisible trailing spaces from soft-wrapping
-        (setq-local word-wrap nil)                   ;; 2. Disable visual line mode spillover
-        (setq-local mode-require-final-newline nil)  ;; 3. Stop Emacs from silently appending an EOF newline
-        (setq-local require-final-newline nil)
-        
-        ;; Turn off fringes, margins, and the "small dashes" empty line indicators
-        (setq left-fringe-width 0)
-        (setq right-fringe-width 0)
-        (setq left-margin-width 0)
-        (setq right-margin-width 0)
-        (setq indicate-empty-lines nil)
-        (setq indicate-buffer-boundaries nil)
-        
-        ;; Force line numbers OFF
-        (when (bound-and-true-p display-line-numbers-mode)
-          (display-line-numbers-mode -1))
-        (setq display-line-numbers nil))
-        
-      ;; Dynamically bind pixel-perfect resizing so display-buffer respects it natively
-      (let ((window-resize-pixelwise t) 
-            (window-size-fixed nil))
-        (let ((win (display-buffer my/speed-dial-hud-buffer-name
-                                   '((display-buffer-in-side-window)
-                                     (side . top)
-                                     (window-height . fit-window-to-buffer) 
-                                     (window-parameters . ((no-other-window . t)
-                                                           (no-delete-other-windows . t)))))))
-          (when win
-            (let ((window-min-height 1))
-              (fit-window-to-buffer win nil 1))))))))
+    ;; If EITHER is open, close BOTH of them
+    (if (or (and buf-top (get-buffer-window buf-top))
+            (and buf-bot (get-buffer-window buf-bot)))
+        (progn
+          (when (and buf-top (get-buffer-window buf-top)) (delete-window (get-buffer-window buf-top)))
+          (when (and buf-bot (get-buffer-window buf-bot)) (delete-window (get-buffer-window buf-bot))))
+      
+      ;; Otherwise, open BOTH
+      (my/setup-hud-window my/speed-dial-hud-buffer-name 
+                           (my/speed-dial-hud-content active-buf active-file) 
+                           'top)
+      (my/setup-hud-window my/speed-dial-global-hud-buffer-name 
+                           (my/speed-dial-global-hud-content active-buf active-file) 
+                           'bottom))))
 
 ;; ==========================================
 ;; 8.6 HUD AUTO-UPDATE HOOKS
 ;; ==========================================
 
 (defun my/speed-dial-auto-refresh (&rest _)
-  "Refresh the HUD automatically if it's visible and we change buffers."
-  ;; Only refresh if HUD is visible AND our current buffer isn't the HUD itself
-  (when (and (get-buffer-window my/speed-dial-hud-buffer-name)
-             (not (string= (buffer-name) my/speed-dial-hud-buffer-name)))
-    (my/refresh-speed-dial-hud)))
+  "Refresh the HUDs automatically if they are visible and we change buffers."
+  (let ((bname (buffer-name)))
+    ;; Only refresh if at least one HUD is visible, AND our cursor isn't currently INSIDE a HUD buffer
+    (when (and (or (get-buffer-window my/speed-dial-hud-buffer-name)
+                   (get-buffer-window my/speed-dial-global-hud-buffer-name))
+               (not (string= bname my/speed-dial-hud-buffer-name))
+               (not (string= bname my/speed-dial-global-hud-buffer-name)))
+      (my/refresh-speed-dial-hud))))
 
 ;; Tie the HUD refresh to Emacs' native window and buffer switching systems
 (add-hook 'window-selection-change-functions #'my/speed-dial-auto-refresh)
 (add-hook 'window-buffer-change-functions #'my/speed-dial-auto-refresh)
-
-;; ==========================================
-;; 9. KEYBINDINGS
-;; ==========================================
 
 ;; ==========================================
 ;; 9. KEYBINDINGS
