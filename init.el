@@ -728,47 +728,34 @@ Displays the calculated breadcrumb path in the echo area."
 (advice-add 'after-find-file :around #'my/fast-after-find-file)
 
 ;; ==========================================
-;; 2. AIRTIGHT VIM-STYLE AUTO-SAVE ENGINE + CURSOR TRACKING
+;; 2. THE VIM-BALANCED AUTO-SAVE ENGINE & CURSOR TRACKER
 ;; ==========================================
-;; Trigger 1: The 0.5-Second Background Loop
-(defvar my/vim-idle-timer nil)
-(when my/vim-idle-timer (cancel-timer my/vim-idle-timer))
 
-(setq my/vim-idle-timer
-      (run-with-idle-timer 0.5 t 
-                           (lambda ()
-                             (let ((inhibit-message t))
-                               (do-auto-save t nil)))))
+;; 1. Match Vim's Exact Aggressiveness (Using Emacs' optimized C engine)
+;; We throw away the custom timers. Emacs does this natively and much faster.
+(setq auto-save-timeout 4)    ;; Vim's `updatetime` (4 seconds of idle time)
+(setq auto-save-interval 200) ;; Vim's `updatecount` (200 keystrokes)
 
-;; Trigger 2: The Continuous Typing Interceptor (Every 20 chars)
-(defvar-local my/auto-save-keystroke-count 0)
-
-(defun my/auto-save-on-typing (&rest _)
-  (setq my/auto-save-keystroke-count (1+ my/auto-save-keystroke-count))
-  (when (>= my/auto-save-keystroke-count 20)
-    (setq my/auto-save-keystroke-count 0)
-    (let ((inhibit-message t))
-      (do-auto-save t t))))
-
-(add-hook 'after-change-functions #'my/auto-save-on-typing)
-
-;; Trigger 3: Instant swap creation on the first character
+;; 2. Instant Vim Swap Creation on the First Keystroke
 (defun my/instant-vim-swap-on-first-keystroke ()
-  (when buffer-file-name
+  (when (and buffer-file-name (not buffer-read-only))
     (let ((inhibit-message t))
       (do-auto-save t t))))
 
 (add-hook 'first-change-hook #'my/instant-vim-swap-on-first-keystroke)
 
-;; NEW: Force Emacs to save the cursor position to a side-car file during auto-saves!
+;; 3. FIX: The Bulletproof Cursor Tracker (The Sidecar)
 (defun my/save-point-during-auto-save (&rest _)
-  "Save cursor position to a side-car file.
-This is necessary because Emacs plain-text auto-saves do not store it."
+  "Save cursor position to a side-car file whenever Emacs auto-saves."
   (when (and buffer-file-name buffer-auto-save-file-name)
     (ignore-errors
       (write-region (number-to-string (point)) nil 
                     (concat buffer-auto-save-file-name ".point") nil 'silent))))
 
+(add-hook 'auto-save-hook #'my/save-point-during-auto-save)
+(advice-add 'do-auto-save :after #'my/save-point-during-auto-save)
+
+;; 4. Ensure manual autosaves (like our first-change-hook) also track the cursor
 (advice-add 'do-auto-save :after #'my/save-point-during-auto-save)
 
 ;; ==========================================
@@ -896,21 +883,37 @@ This is necessary because Emacs plain-text auto-saves do not store it."
                                     (with-current-buffer buf (my/assassinate-autosave)))))
 
 ;; ==========================================
-;; 5. HOUSEKEEPING & CLEAN EXITS
+;; 5. CENTRALIZED HOUSEKEEPING (NEOVIM STYLE)
 ;; ==========================================
 
-;; 1. NUKE THE TILDA (~) FILES
-;; We use Git and our bulletproof auto-save. We do not need file.txt~ clutter.
-(setq make-backup-files nil)
+;; Define the centralized directory (similar to ~/.local/state/nvim/swap/)
+(defvar my/emacs-recovery-dir (expand-file-name "~/.local/state/emacs/recovery/"))
 
-;; 2. NUKE THE LOCKFILES (.#filename)
-;; Emacs creates weird symlinks to track if someone else is editing the file.
-;; They annoyingly show up in tree explorers. Kill them.
-(setq create-lockfiles nil)
+;; Create the directory if it doesn't exist
+(unless (file-exists-p my/emacs-recovery-dir)
+  (make-directory my/emacs-recovery-dir t))
 
-;; 3. CLEAN UP SIDECARS ON NORMAL SAVE (:w)
-;; When you properly save a file, Emacs natively deletes the #autosave# file, 
-;; but it leaves our custom .point file behind. This sweeps it up.
+;; 1. ROUTE BACKUP FILES (~) TO THE CENTRAL DIRECTORY
+;; We keep backups enabled for safety, but out of sight!
+(setq make-backup-files t
+      vc-make-backup-files t) ; Even make backups for files in Git
+(setq backup-directory-alist `(("." . ,my/emacs-recovery-dir)))
+
+;; 2. ROUTE AUTO-SAVE FILES (#) TO THE CENTRAL DIRECTORY
+;; The 't' at the end tells Emacs to flatten the path (turn / into !) 
+;; so files with the same name from different projects don't overwrite each other.
+(setq auto-save-file-name-transforms `((".*" ,my/emacs-recovery-dir t)))
+
+;; 3. ROUTE LOCKFILES (.#) TO THE CENTRAL DIRECTORY (Emacs 28+)
+;; Lockfiles prevent two Emacs instances from editing the same file simultaneously.
+(setq create-lockfiles t)
+(when (boundp 'lock-file-name-transforms)
+  (setq lock-file-name-transforms `((".*" ,my/emacs-recovery-dir t))))
+
+;; 4. CLEAN UP SIDECARS ON NORMAL SAVE (:w)
+;; Because buffer-auto-save-file-name now points to ~/.local/state/emacs/recovery/...,
+;; your .point files are ALREADY being created in the central directory automatically!
+;; We still want to sweep them up so the recovery folder doesn't get massive over time.
 (defun my/cleanup-sidecar-on-normal-save ()
   "Delete the .point side-car file when the buffer is properly saved."
   (when buffer-auto-save-file-name
@@ -920,11 +923,12 @@ This is necessary because Emacs plain-text auto-saves do not store it."
 
 (add-hook 'after-save-hook #'my/cleanup-sidecar-on-normal-save)
 
-;; 4. CLEAN UP ON KILL-BUFFER (Just in case)
-;; If you kill a buffer that is fully saved and clean, make sure 
-;; no ghost .point files are lingering in the directory.
+;; 5. CLEAN UP ON KILL-BUFFER (Just in case)
 (defun my/cleanup-sidecar-on-kill ()
   (unless (buffer-modified-p)
     (my/cleanup-sidecar-on-normal-save)))
 
 (add-hook 'kill-buffer-hook #'my/cleanup-sidecar-on-kill)
+
+;; Force TRAMP to use the local centralized auto-save directory
+(setq tramp-auto-save-directory my/emacs-recovery-dir)
