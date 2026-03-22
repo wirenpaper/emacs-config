@@ -625,8 +625,8 @@ Highlights the item matching ACTIVE-BUF or ACTIVE-FILE with a '->'."
                                 ;; Swap ) for -> if active
                                 (sep (if is-active "→" ")"))
                                 ;; Make the active item pop with a green face
-                                (key-face (if is-active '(:weight bold :foreground "green") '(:weight bold :foreground "blue")))
-                                (text-face (if is-active '(:weight bold :foreground "green") nil)))
+                                (key-face (if is-active '(:weight bold :foreground "blue") '(:weight bold :foreground "blue")))
+                                (text-face (if is-active '(:weight bold :background "blue" :foreground "white") nil)))
                            (format "%s%s %s"
                                    (propertize k 'face key-face)
                                    (propertize sep 'face key-face)
