@@ -662,15 +662,20 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
                                 
                                 ;; Swap ) for -> if active
                                 (sep (if is-active "→" ")"))
-                                ;; Keep your custom blue highlight style
-                                (key-face (if is-active '(:weight bold :foreground "blue") '(:weight bold :foreground "blue")))
-                                (text-face (if is-active '(:weight bold :background "blue" :foreground "white") nil)))
+                                
+                                ;; --- STYLING CHANGES HERE ---
+                                ;; keys have squiggly lines
+                                (key-face '(:weight bold :underline (:style wave)))
+
+                                ;; Use a neutral "inverted" highlight for the active text instead of a blue background
+                                (text-face (if is-active '(:weight bold :inverse-video t) nil)))
+                           
                            (format "%s%s %s"
                                    (propertize k 'face key-face)
                                    (propertize sep 'face key-face)
                                    (if text-face (propertize clean-name 'face text-face) clean-name)))))
          ;; Subtract 4 to be absolutely immune to scrollbar/fringe edge-cases
-         (max-width (- (frame-width) 4))
+         (max-width (- (frame-width) 0))
          (current-len 0)
          (body ""))
 

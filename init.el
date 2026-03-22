@@ -385,7 +385,8 @@
 
 (use-package ef-themes
   :config
-  (load-theme 'ef-orange t)
+  ;;(load-theme 'ef-orange t)
+  (load-theme 'ef-cherie t)
   (evil-define-key 'normal 'global
     (kbd "<leader> t s") 'ef-themes-select
     (kbd "<leader> t t") 'ef-themes-toggle))
