@@ -724,7 +724,22 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
     
     (when (bound-and-true-p display-line-numbers-mode)
       (display-line-numbers-mode -1))
-    (setq display-line-numbers nil))
+    (setq display-line-numbers nil)
+
+    ;; --- BULLETPROOF PROTECTION (BUFFER LEVEL) ---
+    ;; Completely nullify all mouse clicks, drags, and drag-and-drop events inside this buffer
+    (let ((map (make-sparse-keymap)))
+      (define-key map [mouse-1] 'ignore)
+      (define-key map [down-mouse-1] 'ignore)
+      (define-key map [drag-mouse-1] 'ignore)
+      (define-key map [mouse-2] 'ignore)
+      (define-key map [down-mouse-2] 'ignore)
+      (define-key map [mouse-3] 'ignore)
+      (define-key map [down-mouse-3] 'ignore)
+      (define-key map[double-mouse-1] 'ignore)
+      (define-key map [triple-mouse-1] 'ignore)
+      (define-key map [drag-n-drop] 'ignore)
+      (use-local-map map)))
     
   ;; Dynamically bind pixel-perfect resizing
   (let ((window-resize-pixelwise t) 
@@ -734,8 +749,13 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
                                  (side . ,window-side)
                                  (window-height . fit-window-to-buffer) 
                                  (window-parameters . ((no-other-window . t)
-                                                       (no-delete-other-windows . t)))))))
+                                                       (no-delete-other-windows . t)
+                                                       (mode-line-format . none)
+                                                       (header-line-format . none)))))))
       (when win
+        ;; --- BULLETPROOF PROTECTION (WINDOW LEVEL) ---
+        ;; Hard-lock the buffer into the window to prevent file-drops from overriding it
+        (set-window-dedicated-p win t)
         (let ((window-min-height 1))
           (fit-window-to-buffer win nil 1))))))
 
@@ -787,7 +807,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 
 
 ;; ==========================================
-;; 8.6 HUD AUTO-UPDATE HOOKS
+;; 8.6 HUD AUTO-UPDATE HOOKS & PROTECTIONS
 ;; ==========================================
 
 (defun my/speed-dial-auto-refresh (&rest _)
@@ -800,9 +820,33 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
                (not (string= bname my/speed-dial-global-hud-buffer-name)))
       (my/refresh-speed-dial-hud))))
 
-;; Tie the HUD refresh to Emacs' native window and buffer switching systems
+(defun my/speed-dial-prevent-focus (&rest _)
+  "Prevent the HUD windows from ever gaining focus. Bounces the cursor back instantly."
+  (let ((win (selected-window)))
+    (when (and (window-live-p win)
+               (member (buffer-name (window-buffer win))
+                       (list my/speed-dial-hud-buffer-name
+                             my/speed-dial-global-hud-buffer-name)))
+      (let ((best-win nil)
+            (best-time -1))
+        ;; Find the most recently used window that is NOT a HUD
+        (walk-windows (lambda (w)
+                        (unless (member (buffer-name (window-buffer w))
+                                        (list my/speed-dial-hud-buffer-name
+                                              my/speed-dial-global-hud-buffer-name))
+                          (let ((time (window-use-time w)))
+                            (when (> time best-time)
+                              (setq best-time time
+                                    best-win w)))))
+                      'nomini)
+        (if best-win
+            (select-window best-win)
+          (other-window 1))))))
+
+;; Tie the HUD refresh and Focus Protection to Emacs' native window systems
 (add-hook 'window-selection-change-functions #'my/speed-dial-auto-refresh)
 (add-hook 'window-buffer-change-functions #'my/speed-dial-auto-refresh)
+(add-hook 'window-selection-change-functions #'my/speed-dial-prevent-focus)
 
 
 ;; ==========================================
