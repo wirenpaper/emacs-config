@@ -414,10 +414,12 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
 
   >>>[TAG MODE] SEARCHING FOR FILE... PRESS A SLOT KEY AFTERWARDS <<<
 
-  GLOBAL (Left Hand)                DYNAMIC (Right Hand)
+  GLOBAL (Left Hand)                        DYNAMIC (Right Hand)
   [a]: %-22s  [j]: %-22s
-  [s]: %-22s  [k]: %-22s[d]: %-22s  [l]: %-22s[f]: %-22s  [;]: %-22s
-  [z]: %-22s[m]: %-22s
+  [s]: %-22s  [k]: %-22s
+  [d]: %-22s  [l]: %-22s
+  [f]: %-22s  [;]: %-22s
+  [z]: %-22s  [m]: %-22s
   [x]: %-22s  [,]: %-22s                      
   [c]: %-22s  [.]: %-22s
   [v]: %-22s  [/]: %-22s
