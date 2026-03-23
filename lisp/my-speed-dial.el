@@ -225,7 +225,7 @@
       (setq my/current-speed-dial-tag "main")
       (my/save-workspace-tag root "main")
       (my/refresh-speed-dial-hud)
-      (message "Auto-created default dynamic tag: [main]")))
+      (message "Auto-created default dynamic tag:[main]")))
 
   (if (not tag)
       (progn
@@ -296,7 +296,7 @@
           (setq my/speed-dial-mode 'drop))
         (hydra-speed-dial/body))
 
-       ;; --- DROP MODE (NON-DESTRUCTIVE CASCADE) ---
+       ;; --- DROP MODE (SWAP vs SHIFT LOGIC) ---
        ((eq my/speed-dial-mode 'drop)
         (let* ((old-tag (car my/pending-move-src))
                (old-slot (cdr my/pending-move-src))
@@ -306,26 +306,52 @@
             (let ((moving-name (nth 0 (car old-row)))
                   (moving-data (nth 1 (car old-row))))
               
-              (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
-                              (list root old-tag old-slot))
+              (if (string= old-tag tag)
+                  ;; =========================================
+                  ;; 1. SAME SIDE (SWAP)
+                  ;; =========================================
+                  (unless (= old-slot num)
+                    (let ((target-occupant (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
+                                                          (list root tag num))))
+                      ;; Overwrite the destination slot with the item we are carrying
+                      (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
+                                      (list root tag num moving-name moving-data))
+                      
+                      ;; Put the displaced target occupant back into the source slot
+                      (if target-occupant
+                          (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
+                                          (list root old-tag old-slot (nth 0 (car target-occupant)) (nth 1 (car target-occupant))))
+                        ;; If target was empty, just clear the old source slot
+                        (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
+                                        (list root old-tag old-slot)))
+                      (message "Swapped '%s' to slot %d!" moving-name num)))
 
-              (unless (and (string= old-tag tag) (= old-slot num))
-                (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" 
-                                (list root tag moving-name)))
-              
-              (let ((current-name moving-name)
-                    (current-data moving-data))
-                (cl-loop for s from num to 8 do
-                         (let ((occupant (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
-                                                        (list root tag s))))
-                           (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
-                                           (list root tag s current-name current-data))
-                           (if occupant
-                               (setq current-name (nth 0 (car occupant))
-                                     current-data (nth 1 (car occupant)))
-                             (cl-return)))))
-              
-              (message "Moved '%s' to slot %d on [%s] (shifted others down)!" moving-name num tag)))
+                ;; =========================================
+                ;; 2. DIFFERENT SIDES (SHIFT / CASCADE)
+                ;; =========================================
+                (progn
+                  ;; Delete item from old slot completely
+                  (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
+                                  (list root old-tag old-slot))
+                  ;; Prevent duplicates on the new side
+                  (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" 
+                                  (list root tag moving-name))
+                  
+                  ;; Perform the Cascade Shift down the list
+                  (let ((current-name moving-name)
+                        (current-data moving-data))
+                    (cl-loop for s from num to 8 do
+                             (let ((occupant (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
+                                                            (list root tag s))))
+                               (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
+                                               (list root tag s current-name current-data))
+                               (if occupant
+                                   (setq current-name (nth 0 (car occupant))
+                                         current-data (nth 1 (car occupant)))
+                                 (cl-return)))))
+                  (message "Moved '%s' across sides to slot %d (shifted others down)!" moving-name num)))))
+          
+          ;; Cleanup and reset mode
           (setq my/speed-dial-mode 'normal
                 my/pending-move-src nil)
           (my/refresh-speed-dial-hud)
