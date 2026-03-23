@@ -959,7 +959,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 (evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
 
 ;; 3. EVIL EX COMMANDS (Type :tactical or :operational in normal mode!)
-(evil-ex-define-cmd "tactical" 'my/speed-dial-tactical-mode)
+(evil-ex-define-cmd "slick" 'my/speed-dial-tactical-mode)
 (evil-ex-define-cmd "operational" 'my/speed-dial-operational-mode)
 
 ;; ==========================================
