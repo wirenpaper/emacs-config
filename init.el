@@ -193,7 +193,7 @@
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
 ;; ==========================================
-;; Reload Config Function
+;; Reload / Compile Config Functions
 ;; ==========================================
 (defun my/reload-config ()
   "Reload your Emacs init.el file instantly."
@@ -205,9 +205,10 @@
   (evil-define-key 'normal 'global (kbd "<leader> h r r") 'my/reload-config))
 
 (defun my/compile-config ()
-  "Compile my-speed-dial.el first, then init.el to Machine Code (if supported)."
+  "Compile all config files to Machine Code (if supported)."
   (interactive)
   (let ((speed-dial (expand-file-name "lisp/my-speed-dial.el" user-emacs-directory))
+        (theme      (expand-file-name "local-theme.el" user-emacs-directory))
         (init       (expand-file-name "init.el" user-emacs-directory))
         (use-native (and (fboundp 'native-comp-available-p) 
                          (native-comp-available-p))))
@@ -221,8 +222,14 @@
       (if use-native
           (native-compile speed-dial)
         (byte-compile-file speed-dial)))
+
+    ;; 2. Compile local-theme.el
+    (when (file-exists-p theme)
+      (if use-native
+          (native-compile theme)
+        (byte-compile-file theme)))
       
-    ;; 2. Compile init.el
+    ;; 3. Compile init.el
     (when (file-exists-p init)
       (if use-native
           (native-compile init)
