@@ -371,6 +371,36 @@
 ;; 6. HYDRA HELPER FUNCTIONS
 ;; ==========================================
 
+(defun my/hydra-consolidate-slots ()
+  "Remove all gaps by shifting filled slots to be contiguous starting from slot 1.
+Applies to both the left hand (global) and right hand (dynamic tag)."
+  (interactive)
+  (let* ((root (my/get-workspace))
+         (tags (list "global" my/current-speed-dial-tag))
+         (total-moved 0))
+    
+    (dolist (tag tags)
+      (when tag
+        ;; 1. Fetch all existing bookmarks for the tag, naturally ordered by their current slot
+        (let ((rows (sqlite-select my/sd-db "SELECT slot, name, record FROM speed_dial WHERE workspace=? AND tag=? ORDER BY slot ASC" (list root tag))))
+          
+          ;; 2. Nuke the slots for this tag entirely
+          (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))
+          
+          ;; 3. Re-insert them starting at 1
+          (let ((new-slot 1))
+            (dolist (row rows)
+              (let ((name (nth 1 row))
+                    (record (nth 2 row)))
+                (sqlite-execute my/sd-db "INSERT INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
+                                (list root tag new-slot name record))
+                (cl-incf new-slot)
+                (cl-incf total-moved)))))))
+    
+    (my/refresh-speed-dial-hud)
+    (message "Workspace organized! Shifted %d bookmarks to close all gaps." total-moved))
+  (hydra-speed-dial/body))
+
 (defun my/hydra-find-and-tag ()
   "Find a file to pin without visiting it immediately."
   (interactive)
@@ -624,7 +654,7 @@ _a_: %s(my/sd-name 'left 1)  _j_: %s(my/sd-name 'right 1)  _T_: Tag File     _C_
 _s_: %s(my/sd-name 'left 2)  _k_: %s(my/sd-name 'right 2)  _F_: Find & Tag   _R_: Rename Tag
 _d_: %s(my/sd-name 'left 3)  _l_: %s(my/sd-name 'right 3)  _U_: Untag Slot   _Y_: Copy Tag
 _f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Toggle Move  _W_: Wipe Tag
-_z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _X_: Nuke Workspace
+_z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _O_: Organize HUD _X_: Nuke Workspace
 _x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  
 _c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _p_: Lock Workspc | _P_: Clone Workspc
 _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _q_: Quit HUD
@@ -644,10 +674,11 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
   ("/" (my/speed-dial-jump my/current-speed-dial-tag 8))
 
   ("T" my/hydra-start-tag) ("F" my/hydra-find-and-tag) ("U" my/hydra-start-untag)
-  ("M" my/hydra-start-move) ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag)
-  ("R" my/hydra-rename-tag) ("Y" my/hydra-copy-tag)
-  ("X" my/hydra-wipe-workspace) ("p" my/set-workspace-and-resume)
-  ("P" my/hydra-clone-workspace) ("t" my/set-tag-and-resume) 
+  ("M" my/hydra-start-move) ("O" my/hydra-consolidate-slots) 
+  ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag) ("R" my/hydra-rename-tag) 
+  ("Y" my/hydra-copy-tag) ("X" my/hydra-wipe-workspace) 
+  ("p" my/set-workspace-and-resume) ("P" my/hydra-clone-workspace) 
+  ("t" my/set-tag-and-resume) 
   ("q" my/hydra-quit) ("<escape>" my/hydra-quit) ("C-g" my/hydra-quit))
 
 ;; ==========================================
