@@ -406,9 +406,15 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
   (interactive)
   (setq my/speed-dial-mode 'tag)
   (setq my/pending-tag-target nil)
-  (let* ((original-dir default-directory) 
-         (hud-text
-          (format "
+  (let* ((original-dir default-directory)
+         ;; NEW: Check if we are in operational mode
+         (show-hud (eq my/speed-dial-display-mode 'operational))
+         ;; Only generate the buffer and the text matrix if we actually need it
+         (buf (when show-hud (get-buffer-create " *Speed-Dial HUD*")))
+         (win nil)
+         (selected-file nil)
+         (hud-text (when show-hud
+                     (format "
   WORKSPACE: %s
   TAG (R)  : %s
 
@@ -424,32 +430,34 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
   [c]: %-22s  [.]: %-22s
   [v]: %-22s  [/]: %-22s
 "
-                  (or my/current-workspace-root "[None Locked]")
-                  (or my/current-speed-dial-tag "[No Tag Selected]")
-                  (my/sd-name 'left 1) (my/sd-name 'right 1)
-                  (my/sd-name 'left 2) (my/sd-name 'right 2)
-                  (my/sd-name 'left 3) (my/sd-name 'right 3)
-                  (my/sd-name 'left 4) (my/sd-name 'right 4)
-                  (my/sd-name 'left 5) (my/sd-name 'right 5)
-                  (my/sd-name 'left 6) (my/sd-name 'right 6)
-                  (my/sd-name 'left 7) (my/sd-name 'right 7)
-                  (my/sd-name 'left 8) (my/sd-name 'right 8)))
-         (buf (get-buffer-create " *Speed-Dial HUD*"))
-         (win nil)
-         (selected-file nil))
-    (with-current-buffer buf
-      (erase-buffer) (insert (propertize hud-text 'face 'bold))
-      (goto-char (point-min))
-      (setq-local mode-line-format nil header-line-format nil cursor-type nil window-size-fixed t))
-    (setq win (display-buffer buf '((display-buffer-in-side-window) (side . top) (window-height . fit-window-to-buffer))))
-    (set-window-dedicated-p win t)
+                             (or my/current-workspace-root "[None Locked]")
+                             (or my/current-speed-dial-tag "[No Tag Selected]")
+                             (my/sd-name 'left 1) (my/sd-name 'right 1)
+                             (my/sd-name 'left 2) (my/sd-name 'right 2)
+                             (my/sd-name 'left 3) (my/sd-name 'right 3)
+                             (my/sd-name 'left 4) (my/sd-name 'right 4)
+                             (my/sd-name 'left 5) (my/sd-name 'right 5)
+                             (my/sd-name 'left 6) (my/sd-name 'right 6)
+                             (my/sd-name 'left 7) (my/sd-name 'right 7)
+                             (my/sd-name 'left 8) (my/sd-name 'right 8)))))
+
+    ;; Conditionally display the giant popup ONLY in operational mode
+    (when show-hud
+      (with-current-buffer buf
+        (erase-buffer) (insert (propertize hud-text 'face 'bold))
+        (goto-char (point-min))
+        (setq-local mode-line-format nil header-line-format nil cursor-type nil window-size-fixed t))
+      (setq win (display-buffer buf '((display-buffer-in-side-window) (side . top) (window-height . fit-window-to-buffer))))
+      (set-window-dedicated-p win t))
     
     (condition-case nil
         (unwind-protect
             (let ((default-directory original-dir))
               (setq selected-file (read-file-name "Select file to pin: ")))
-          (when (window-live-p win) (delete-window win))
-          (kill-buffer buf))
+          ;; Clean up safely without nuking the tactical Tmux bars
+          (when show-hud 
+            (when (window-live-p win) (delete-window win))
+            (kill-buffer buf)))
       (quit (setq my/speed-dial-mode 'normal) (message "Cancelled Find & Tag")))
       
     (when selected-file
