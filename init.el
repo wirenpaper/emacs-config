@@ -385,16 +385,16 @@
 
 (use-package ef-themes
   :config
-  (load-theme 'ef-orange t)
-  ;;(load-theme 'ef-cherie t)
+  ;; Load our local theme file
+  (let ((theme-file (expand-file-name "local-theme.el" user-emacs-directory)))
+    (if (file-exists-p theme-file)
+        (load theme-file)
+      ;; Ultimate fallback just in case the file gets deleted somehow
+      (load-theme 'ef-orange t)))
+
   (evil-define-key 'normal 'global
     (kbd "<leader> t s") 'ef-themes-select
     (kbd "<leader> t t") 'ef-themes-toggle))
-
-;; Reset memory back to normal after startup so Emacs doesn't freeze during normal use
-(add-hook 'emacs-startup-hook
-          (lambda ()
-            (setq gc-cons-threshold (* 16 1024 1024)))) ;; 100 MB
 
 ;; ==========================================
 ;; 9. Elfeed & Elfeed-Org
