@@ -462,7 +462,34 @@
   (pdf-tools-install t)
   
   ;; Turn on Emacs' built-in memory for where your cursor was
-  (save-place-mode 1))
+  (save-place-mode 1)
+  
+  ;; ==========================================
+  ;; FIX: Dynamic PDF Colors on Theme Change
+  ;; ==========================================
+  (defun my/pdf-update-colors-on-theme-change (&rest _)
+    "Update PDF midnight colors and refresh all open PDFs when theme changes."
+    ;; We use a tiny timer because Emacs needs a split-second to actually 
+    ;; apply the new theme's faces to the frame before we can read them.
+    (run-with-timer 0.1 nil
+      (lambda ()
+        ;; 1. Update midnight colors to the newly loaded theme's default faces
+        (setq pdf-view-midnight-colors (cons (face-foreground 'default)
+                                             (face-background 'default)))
+        ;; 2. Look through all open buffers for PDFs
+        (dolist (buffer (buffer-list))
+          (with-current-buffer buffer
+            (when (eq major-mode 'pdf-view-mode)
+              ;; Clear out the old cached images
+              (when (fboundp 'pdf-info-invalidate-image-caches)
+                (pdf-info-invalidate-image-caches))
+              ;; Toggle midnight mode off and on to force a re-render
+              (when pdf-view-midnight-minor-mode
+                (pdf-view-midnight-minor-mode -1)
+                (pdf-view-midnight-minor-mode 1))))))))
+
+  ;; Attach our function to Emacs' load-theme command
+  (advice-add 'load-theme :after #'my/pdf-update-colors-on-theme-change))
 
   ;; ==========================================
   ;; Show Full PDF Chapter Hierarchy (On-Demand)
