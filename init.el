@@ -447,7 +447,7 @@
 ;; ==========================================
 
 ;; Tell Emacs not to warn us about large files unless they are over 50MB
-(setq large-file-warning-threshold (* 50 1024 1024))
+(setq large-file-warning-threshold (* 80 1024 1024))
 
 (use-package pdf-tools
   :mode ("\\.pdf\\'" . pdf-view-mode) 
@@ -600,6 +600,9 @@ Displays the calculated breadcrumb path in the echo area."
   :ensure nil
   :hook ((c-mode . eglot-ensure)
          (c++-mode . eglot-ensure))
+  :custom
+  (eglot-ignored-server-capabilities '(:documentOnTypeFormattingProvider
+                                       :inlayHintProvider))
   :config
   (setq eglot-events-buffer-config '(:size 0 :format short)) 
   
@@ -626,17 +629,17 @@ Displays the calculated breadcrumb path in the echo area."
 (setq-default indent-tabs-mode nil)
 
 ;; Set the width of tabs for display purposes (optional, as we use spaces)
-(setq-default tab-width 4)
+;;(setq-default tab-width 4)
 
 ;; Tell the byte-compiler this variable exists to silence the warning
 (defvar c-basic-offset)
 
 ;; Define a function to set C/C++ specific indentation
 (defun my/c-c++-hook ()
-  "Custom settings for C and C++ modes."
-  (setq c-basic-offset 4)
+  "Custom settings for C and C++ modes.")
+  ;;(setq c-basic-offset 4)
   ;; Ensure spaces are used for indentation within this mode
-  (setq indent-tabs-mode nil))
+  ;;(setq indent-tabs-mode nil))
 
 ;; Add this function to the hooks for C and C++ modes
 (add-hook 'c-mode-hook 'my/c-c++-hook)
@@ -967,3 +970,27 @@ Displays the calculated breadcrumb path in the echo area."
 
 ;; Force TRAMP to use the local centralized auto-save directory
 (setq tramp-auto-save-directory my/emacs-recovery-dir)
+
+;; ==========================================
+;; 13. VSCode-Style Function/Symbol Outline
+;; ==========================================
+
+(use-package imenu-list
+  :custom
+  ;; Put the side-pane on the right (like VSCode) instead of the left
+  (imenu-list-position 'right)
+  ;; How wide the side pane should be
+  (imenu-list-size 40)
+  ;; Automatically focus the side-pane when you open it
+  (imenu-list-focus-after-activation t)
+  :config
+  ;; Bind it to Leader + c + o (Code Outline)
+  (with-eval-after-load 'evil
+    (evil-define-key 'normal 'global (kbd "<leader> c o") 'imenu-list-smart-toggle)
+    
+    ;; Make Vim keys work smoothly inside the outline pane
+    (evil-define-key 'normal imenu-list-major-mode-map
+      (kbd "RET") 'imenu-list-ret-dwim
+      (kbd "SPC") 'imenu-list-display-dwim
+      (kbd "<escape>") 'imenu-list-quit-window
+      (kbd "q") 'imenu-list-quit-window)))

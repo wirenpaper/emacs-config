@@ -973,4 +973,35 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 ;; ==========================================
 ;; my-speed-dial.el ends here
 ;; ==========================================
+
+(defun my/jump-to-inline-mark (char)
+  "Read a character, jump to MARK:<char> in the current buffer, and center the screen."
+  (interactive "c")
+  (let ((search-str (format "mark:%c" char))
+        (orig-point (point)))
+    
+    ;; Save current location to Evil's jump list (allows C-o to jump back)
+    (evil-set-jump)
+    
+    ;; Start search from the top
+    (goto-char (point-min))
+    
+    (let ((case-fold-search nil))
+      (if (search-forward search-str nil t)
+          (progn
+            ;; Move cursor to the start of the MARK string
+            (goto-char (match-beginning 0))
+            
+            ;; Recenter the screen (exact equivalent of Vim's `zz`)
+            (recenter)
+            
+            (message "Jumped to %s" search-str))
+            
+        ;; If not found, go back and show error
+        (goto-char orig-point)
+        (message "Marker '%s' not found in this file" search-str)))))
+
+;; Bind <leader> b to the function
+(evil-define-key 'normal 'global (kbd "<leader> s") 'my/jump-to-inline-mark)
+
 (provide 'my-speed-dial)
