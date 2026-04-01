@@ -543,6 +543,25 @@ Perfectly steps backwards through parent directories to disambiguate names."
 (defun my/set-workspace-and-resume () (interactive) (call-interactively 'my/set-workspace) (hydra-speed-dial/body))
 (defun my/set-tag-and-resume ()       (interactive) (call-interactively 'my/set-speed-dial-tag) (hydra-speed-dial/body))
 
+(defun my/hydra-anchor-workspace ()
+  "Quickly switch to a previously used workspace stored in the database."
+  (interactive)
+  (let* ((rows (sqlite-select my/sd-db "SELECT DISTINCT workspace FROM speed_dial"))
+         (workspaces (mapcar #'car rows)))
+    (if (not workspaces)
+        (message "No saved workspaces found in the database! Use 'p' to lock a new one.")
+      (let* ((choice (completing-read "Anchor to known workspace: " workspaces nil t))
+             (root (expand-file-name choice))
+             (saved-tag (my/get-saved-workspace-tag root)))
+        (setq my/current-workspace-root root)
+        (setq my/current-speed-dial-tag saved-tag)
+        (my/save-global-workspace-state root)
+        (if saved-tag
+            (message "Anchored to: %s (Restored tag: [%s])" root saved-tag)
+          (message "Anchored to: %s" root))
+        (my/refresh-speed-dial-hud))))
+  (hydra-speed-dial/body))
+
 (defun my/hydra-rename-tag ()
   (interactive)
   (let* ((root (my/get-workspace))
@@ -678,9 +697,9 @@ _s_: %s(my/sd-name 'left 2)  _k_: %s(my/sd-name 'right 2)  _F_: Find & Tag   _R_
 _d_: %s(my/sd-name 'left 3)  _l_: %s(my/sd-name 'right 3)  _U_: Untag Slot   _Y_: Copy Tag
 _f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Toggle Move  _W_: Wipe Tag
 _z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _O_: Organize HUD _X_: Nuke Workspace
-_x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  
-_c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _p_: Lock Workspc | _P_: Clone Workspc
-_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _q_: Quit HUD
+_x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  _A_: Anchor Known _P_: Clone Workspc
+_c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _p_: Lock New Dir _t_: Lock Tag
+_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     
   "
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
   ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
@@ -701,7 +720,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
   ("C" my/hydra-create-tag) ("W" my/hydra-wipe-tag) ("R" my/hydra-rename-tag) 
   ("Y" my/hydra-copy-tag) ("X" my/hydra-wipe-workspace) 
   ("p" my/set-workspace-and-resume) ("P" my/hydra-clone-workspace) 
-  ("t" my/set-tag-and-resume) 
+  ("A" my/hydra-anchor-workspace) ("t" my/set-tag-and-resume) 
   ("q" my/hydra-quit) ("<escape>" my/hydra-quit) ("C-g" my/hydra-quit))
 
 ;; ==========================================
@@ -904,13 +923,13 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
   (interactive)
   (setq my/speed-dial-display-mode 'tactical)
   (my/show-speed-dial-huds)
-  (message "Speed Dial: TACTICAL mode active."))
+  (message "Speed Dial: COMMAND mode active."))
 
 (defun my/speed-dial-operational-mode ()
   (interactive)
   (setq my/speed-dial-display-mode 'operational)
   (my/hide-speed-dial-huds)
-  (message "Speed Dial: OPERATIONAL mode active."))
+  (message "Speed Dial: MENU mode active."))
 
 (defun my/toggle-speed-dial-hud ()
   (interactive)
@@ -933,8 +952,8 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 (evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
 (evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
 
-(evil-ex-define-cmd "slick" 'my/speed-dial-tactical-mode)
-(evil-ex-define-cmd "operational" 'my/speed-dial-operational-mode)
+(evil-ex-define-cmd "command" 'my/speed-dial-tactical-mode)
+(evil-ex-define-cmd "menu" 'my/speed-dial-operational-mode)
 
 (defun my/jump-to-inline-mark (char)
   (interactive "c")
