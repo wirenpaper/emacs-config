@@ -192,7 +192,8 @@
          (tag (read-string (format "Assign to tag (default %s): " (or my/current-speed-dial-tag "main")) 
                            nil nil (or my/current-speed-dial-tag "main")))
          (record (bookmark-make-record))
-         (name (if buffer-file-name (file-name-nondirectory buffer-file-name) (car record)))
+         ;; FIX: Store the full path to prevent identical filenames from overwriting each other
+         (name (if buffer-file-name buffer-file-name (car record)))
          (data-str (prin1-to-string (cdr record))))
     
     (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag name))
@@ -203,7 +204,7 @@
           (message "Tag[%s] is full! All 8 slots are used." tag)
         (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                         (list root tag free-slot name data-str))
-        (message "Pinned '%s' to Slot %d on[%s]" name free-slot tag)
+        (message "Pinned '%s' to Slot %d on[%s]" (file-name-nondirectory name) free-slot tag)
         (my/refresh-speed-dial-hud)))))
 
 ;; ==========================================
@@ -265,7 +266,8 @@
        ;; --- TAG MODE (NON-DESTRUCTIVE CASCADE) ---
        ((eq my/speed-dial-mode 'tag)
         (let* ((record (my/sd-generate-record-for my/pending-tag-target))
-               (moving-name (if my/pending-tag-target (file-name-nondirectory my/pending-tag-target) (car record)))
+               ;; FIX: Keep absolute path in moving-name
+               (moving-name (if my/pending-tag-target my/pending-tag-target (car record)))
                (moving-data (prin1-to-string (cdr record))))
           
           (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag moving-name))
@@ -285,7 +287,7 @@
           (setq my/speed-dial-mode 'normal
                 my/pending-tag-target nil)
           (my/refresh-speed-dial-hud)
-          (message "Tagged '%s' to slot %d on [%s]!" moving-name num tag)
+          (message "Tagged '%s' to slot %d on [%s]!" (file-name-nondirectory moving-name) num tag)
           (hydra-speed-dial/body)))
 
        ;; --- PICK MODE ---
@@ -324,7 +326,7 @@
                         ;; If target was empty, just clear the old source slot
                         (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                                         (list root old-tag old-slot)))
-                      (message "Swapped '%s' to slot %d!" moving-name num)))
+                      (message "Swapped '%s' to slot %d!" (file-name-nondirectory moving-name) num)))
 
                 ;; =========================================
                 ;; 2. DIFFERENT SIDES (SHIFT / CASCADE)
@@ -349,7 +351,7 @@
                                    (setq current-name (nth 0 (car occupant))
                                          current-data (nth 1 (car occupant)))
                                  (cl-return)))))
-                  (message "Moved '%s' across sides to slot %d (shifted others down)!" moving-name num)))))
+                  (message "Moved '%s' across sides to slot %d (shifted others down)!" (file-name-nondirectory moving-name) num)))))
           
           ;; Cleanup and reset mode
           (setq my/speed-dial-mode 'normal
@@ -372,8 +374,7 @@
 ;; ==========================================
 
 (defun my/hydra-consolidate-slots ()
-  "Remove all gaps by shifting filled slots to be contiguous starting from slot 1.
-Applies to both the left hand (global) and right hand (dynamic tag)."
+  "Remove all gaps by shifting filled slots to be contiguous starting from slot 1."
   (interactive)
   (let* ((root (my/get-workspace))
          (tags (list "global" my/current-speed-dial-tag))
@@ -381,13 +382,8 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
     
     (dolist (tag tags)
       (when tag
-        ;; 1. Fetch all existing bookmarks for the tag, naturally ordered by their current slot
         (let ((rows (sqlite-select my/sd-db "SELECT slot, name, record FROM speed_dial WHERE workspace=? AND tag=? ORDER BY slot ASC" (list root tag))))
-          
-          ;; 2. Nuke the slots for this tag entirely
           (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))
-          
-          ;; 3. Re-insert them starting at 1
           (let ((new-slot 1))
             (dolist (row rows)
               (let ((name (nth 1 row))
@@ -407,9 +403,7 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
   (setq my/speed-dial-mode 'tag)
   (setq my/pending-tag-target nil)
   (let* ((original-dir default-directory)
-         ;; NEW: Check if we are in operational mode
          (show-hud (eq my/speed-dial-display-mode 'operational))
-         ;; Only generate the buffer and the text matrix if we actually need it
          (buf (when show-hud (get-buffer-create " *Speed-Dial HUD*")))
          (win nil)
          (selected-file nil)
@@ -441,7 +435,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
                              (my/sd-name 'left 7) (my/sd-name 'right 7)
                              (my/sd-name 'left 8) (my/sd-name 'right 8)))))
 
-    ;; Conditionally display the giant popup ONLY in operational mode
     (when show-hud
       (with-current-buffer buf
         (erase-buffer) (insert (propertize hud-text 'face 'bold))
@@ -454,7 +447,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
         (unwind-protect
             (let ((default-directory original-dir))
               (setq selected-file (read-file-name "Select file to pin: ")))
-          ;; Clean up safely without nuking the tactical Tmux bars
           (when show-hud 
             (when (window-live-p win) (delete-window win))
             (kill-buffer buf)))
@@ -486,7 +478,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
   (hydra-speed-dial/body))
 
 (defun my/hydra-wipe-tag ()
-  "Remove a specific tag entirely from the database."
   (interactive)
   (let* ((root (my/get-workspace))
          (rows (sqlite-select my/sd-db "SELECT DISTINCT tag FROM speed_dial WHERE workspace=? AND tag != 'global'" (list root)))
@@ -503,7 +494,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
   (hydra-speed-dial/body))
 
 (defun my/hydra-wipe-workspace ()
-  "Remove all bookmarks from the workspace but KEEP the workspace locked."
   (interactive)
   (let* ((root (my/get-workspace))
          (count (caar (sqlite-select my/sd-db "SELECT COUNT(*) FROM speed_dial WHERE workspace=?" (list root)))))
@@ -522,7 +512,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
 (defun my/set-tag-and-resume ()       (interactive) (call-interactively 'my/set-speed-dial-tag) (hydra-speed-dial/body))
 
 (defun my/hydra-rename-tag ()
-  "Rename an existing tag and move all its files to the new name."
   (interactive)
   (let* ((root (my/get-workspace))
          (rows (sqlite-select my/sd-db "SELECT DISTINCT tag FROM speed_dial WHERE workspace=? AND tag != 'global'" (list root)))
@@ -543,7 +532,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
   (hydra-speed-dial/body))
 
 (defun my/hydra-copy-tag ()
-  "Copy an existing tag and its slot layout into a new tag name."
   (interactive)
   (let* ((root (my/get-workspace))
          (rows (sqlite-select my/sd-db "SELECT DISTINCT tag FROM speed_dial WHERE workspace=? AND tag != 'global'" (list root)))
@@ -564,7 +552,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
   (hydra-speed-dial/body))
 
 (defun my/hydra-clone-workspace ()
-  "Clone another workspace's layout INTO the currently locked workspace."
   (interactive)
   (unless my/current-workspace-root
     (error "No workspace locked! Press 'p' to lock into your blank target workspace first."))
@@ -586,7 +573,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
 
       (let ((rows (sqlite-select my/sd-db "SELECT tag, slot, name, record FROM speed_dial WHERE workspace=?" (list source-root-exp))))
         
-        ;; PRE-FLIGHT CHECK
         (let ((missing-files nil))
           (dolist (row rows)
             (let* ((data (read (nth 3 row)))
@@ -597,10 +583,8 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
                   (unless (file-exists-p new-path)
                     (push new-path missing-files))))))
           (when missing-files
-            (error "Abort: Target directory is missing %d required files (e.g., '%s'). Did you copy the project files?"
-                   (length missing-files) (file-name-nondirectory (car missing-files)))))
+            (error "Abort: Target directory is missing %d required files." (length missing-files))))
 
-        ;; CLONE EXECUTION
         (dolist (row rows)
           (let* ((tag (nth 0 row))
                  (slot (nth 1 row))
@@ -609,12 +593,10 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
                  (raw-path (alist-get 'filename data))
                  (old-path (when raw-path (expand-file-name raw-path))))
             
-            ;; Adjust internal paths (Only triggers if the file was inside the original project folder)
             (when (and old-path (string-prefix-p source-root-exp old-path))
               (setf (alist-get 'filename data) 
                     (abbreviate-file-name (concat target-root (substring old-path (length source-root-exp))))))
             
-            ;; Adjust floating names if they are pure paths
             (let ((new-name name))
               (when (and name (file-name-absolute-p name))
                 (let ((exp-name (expand-file-name name)))
@@ -624,7 +606,6 @@ Applies to both the left hand (global) and right hand (dynamic tag)."
               (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                               (list target-root tag slot new-name (prin1-to-string data))))))
         
-        ;; CLONE THE META-STATE
         (let ((source-tag (my/get-saved-workspace-tag source-root-exp)))
           (when source-tag
             (my/save-workspace-tag target-root source-tag)
@@ -710,38 +691,36 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
   "Generates the flexbox string for a HUD bar, given the keys and the side (left/right)."
   (let* ((items (cl-loop for i from 1 to 8
                          for k in keys
-                         for raw-name = (my/sd-name side i)
-                         ;; Strip all invisible text properties and accidental spaces
-                         for clean-name = (string-trim (substring-no-properties raw-name))
+                         ;; Fetch the raw name from DB to verify absolute paths for highlighting
+                         for raw-name-row = (sqlite-select my/sd-db "SELECT name FROM speed_dial WHERE workspace=? AND tag=? AND slot=?"
+                                                           (list my/current-workspace-root (if (eq side 'left) "global" my/current-speed-dial-tag) i))
+                         for raw-name = (if raw-name-row (caar raw-name-row) nil)
+                         for ui-name = (my/sd-name side i)
+                         for clean-name = (string-trim (substring-no-properties ui-name))
                          unless (string= clean-name "-")
                          collect 
-                         ;; --- DYNAMIC MATCHING LOGIC (BULLETPROOF) ---
                          (let* ((b-name (and active-buf (substring-no-properties active-buf)))
                                 (f-name (and active-file (file-name-nondirectory (substring-no-properties active-file))))
+                                (a-path (and active-file (expand-file-name (substring-no-properties active-file))))
                                 
-                                ;; Detect if my/sd-name truncated this string with the "…" symbol
                                 (is-truncated (string-suffix-p "…" clean-name))
                                 (base-name (if is-truncated (substring clean-name 0 -1) clean-name))
                                 
-                                ;; Check if buffer name OR file name matches (handles PDF tools and text properties)
-                                (is-active (or (and b-name (if is-truncated (string-prefix-p base-name b-name) (string= base-name b-name)))
-                                               (and f-name (if is-truncated (string-prefix-p base-name f-name) (string= base-name f-name)))))
+                                ;; FIX: Smart check. If DB name is full path, match exact path to prevent 
+                                ;; identical filenames from glowing simultaneously.
+                                (is-active (if (and a-path raw-name (file-name-absolute-p raw-name))
+                                               (string= (expand-file-name raw-name) a-path)
+                                             (or (and b-name (if is-truncated (string-prefix-p base-name b-name) (string= base-name b-name)))
+                                                 (and f-name (if is-truncated (string-prefix-p base-name f-name) (string= base-name f-name))))))
                                 
-                                ;; Swap ) for -> if active
                                 (sep (if is-active "→" ")"))
-                                
-                                ;; --- STYLING CHANGES HERE ---
-                                ;; keys have squiggly lines
                                 (key-face '(:weight bold :underline (:style wave)))
-
-                                ;; Use a neutral "inverted" highlight for the active text instead of a blue background
                                 (text-face (if is-active '(:weight bold :inverse-video t) nil)))
                            
                            (format "%s%s %s"
                                    (propertize k 'face key-face)
                                    (propertize sep 'face key-face)
                                    (if text-face (propertize clean-name 'face text-face) clean-name)))))
-         ;; Subtract 4 to be absolutely immune to scrollbar/fringe edge-cases
          (max-width (- (frame-width) 0))
          (current-len 0)
          (body ""))
@@ -749,7 +728,6 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
     (unless items
       (setq items (list (propertize "[No files tagged]" 'face 'shadow))))
 
-    ;; Flexbox loop
     (dolist (item items)
       (let ((padded-item (concat item " ")))
         (if (> (+ current-len (length padded-item)) max-width)
@@ -761,30 +739,22 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
     (string-trim-right body)))
 
 (defun my/speed-dial-hud-content (&optional active-buf active-file)
-  "Generates content for the TOP (Dynamic / Right Hand) HUD."
   (my/sd-generate-hud-string '("j" "k" "l" ";" "m" "," "." "/") 'right active-buf active-file))
 
 (defun my/speed-dial-global-hud-content (&optional active-buf active-file)
-  "Generates content for the BOTTOM (Global / Left Hand) HUD."
   (my/sd-generate-hud-string '("a" "s" "d" "f" "z" "x" "c" "v") 'left active-buf active-file))
 
 (defun my/setup-hud-window (buf-name content-string window-side)
-  "Helper that creates the buffer, strips UI, and snaps the window to the top or bottom."
   (with-current-buffer (get-buffer-create buf-name)
     (let ((inhibit-read-only t))
       (erase-buffer)
       (insert content-string)
       (goto-char (point-min)))
 
-    ;; Strip ALL editor UI features
     (read-only-mode 1)
     (setq cursor-type nil mode-line-format nil header-line-format nil)
+    (setq-local truncate-lines t word-wrap nil mode-require-final-newline nil require-final-newline nil)
     
-    ;; KILLER FIXES FOR THE VERTICAL GAP:
-    (setq-local truncate-lines t word-wrap nil
-                mode-require-final-newline nil require-final-newline nil)
-    
-    ;; Turn off fringes, margins, and the "small dashes"
     (setq left-fringe-width 0 right-fringe-width 0
           left-margin-width 0 right-margin-width 0
           indicate-empty-lines nil indicate-buffer-boundaries nil)
@@ -793,8 +763,6 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
       (display-line-numbers-mode -1))
     (setq display-line-numbers nil)
 
-    ;; --- BULLETPROOF PROTECTION (BUFFER LEVEL) ---
-    ;; Completely nullify all mouse clicks, drags, and drag-and-drop events inside this buffer
     (let ((map (make-sparse-keymap)))
       (define-key map [mouse-1] 'ignore)
       (define-key map [down-mouse-1] 'ignore)
@@ -808,7 +776,6 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
       (define-key map [drag-n-drop] 'ignore)
       (use-local-map map)))
     
-  ;; Dynamically bind pixel-perfect resizing
   (let ((window-resize-pixelwise t) 
         (window-size-fixed nil))
     (let ((win (display-buffer buf-name
@@ -820,22 +787,18 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
                                                        (mode-line-format . none)
                                                        (header-line-format . none)))))))
       (when win
-        ;; --- BULLETPROOF PROTECTION (WINDOW LEVEL) ---
-        ;; Hard-lock the buffer into the window to prevent file-drops from overriding it
         (set-window-dedicated-p win t)
         (let ((window-min-height 1))
           (fit-window-to-buffer win nil 1))))))
 
 (defun my/hide-speed-dial-huds ()
-  "Force closes BOTH the top and bottom Tmux-style HUDs."
   (let ((win-top (get-buffer-window my/speed-dial-hud-buffer-name))
         (win-bot (get-buffer-window my/speed-dial-global-hud-buffer-name)))
     (when win-top (delete-window win-top))
     (when win-bot (delete-window win-bot))))
 
 (defun my/show-speed-dial-huds ()
-  "Force opens BOTH the top and bottom Tmux-style HUDs."
-  (my/hide-speed-dial-huds) ;; Prevent duplicates
+  (my/hide-speed-dial-huds)
   (let ((active-buf (buffer-name))
         (active-file (buffer-file-name)))
     (my/setup-hud-window my/speed-dial-hud-buffer-name 
@@ -846,13 +809,11 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
                          'bottom)))
 
 (defun my/refresh-speed-dial-hud ()
-  "Refreshes BOTH HUD contents dynamically."
   (let ((win-top (get-buffer-window my/speed-dial-hud-buffer-name))
         (win-bot (get-buffer-window my/speed-dial-global-hud-buffer-name))
         (active-buf (buffer-name))
         (active-file (buffer-file-name)))
     
-    ;; Update Top
     (when win-top
       (with-current-buffer my/speed-dial-hud-buffer-name
         (let ((inhibit-read-only t))
@@ -862,7 +823,6 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
       (let ((window-resize-pixelwise t) (window-size-fixed nil) (window-min-height 1))
         (fit-window-to-buffer win-top nil 1)))
         
-    ;; Update Bottom
     (when win-bot
       (with-current-buffer my/speed-dial-global-hud-buffer-name
         (let ((inhibit-read-only t))
@@ -872,15 +832,12 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
       (let ((window-resize-pixelwise t) (window-size-fixed nil) (window-min-height 1))
         (fit-window-to-buffer win-bot nil 1)))))
 
-
 ;; ==========================================
 ;; 8.6 HUD AUTO-UPDATE HOOKS & PROTECTIONS
 ;; ==========================================
 
 (defun my/speed-dial-auto-refresh (&rest _)
-  "Refresh the HUDs automatically if they are visible and we change buffers."
   (let ((bname (buffer-name)))
-    ;; Only refresh if at least one HUD is visible, AND our cursor isn't currently INSIDE a HUD buffer
     (when (and (or (get-buffer-window my/speed-dial-hud-buffer-name)
                    (get-buffer-window my/speed-dial-global-hud-buffer-name))
                (not (string= bname my/speed-dial-hud-buffer-name))
@@ -888,7 +845,6 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
       (my/refresh-speed-dial-hud))))
 
 (defun my/speed-dial-prevent-focus (&rest _)
-  "Prevent the HUD windows from ever gaining focus. Bounces the cursor back instantly."
   (let ((win (selected-window)))
     (when (and (window-live-p win)
                (member (buffer-name (window-buffer win))
@@ -896,7 +852,6 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
                              my/speed-dial-global-hud-buffer-name)))
       (let ((best-win nil)
             (best-time -1))
-        ;; Find the most recently used window that is NOT a HUD
         (walk-windows (lambda (w)
                         (unless (member (buffer-name (window-buffer w))
                                         (list my/speed-dial-hud-buffer-name
@@ -910,98 +865,67 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
             (select-window best-win)
           (other-window 1))))))
 
-;; Tie the HUD refresh and Focus Protection to Emacs' native window systems
 (add-hook 'window-selection-change-functions #'my/speed-dial-auto-refresh)
 (add-hook 'window-buffer-change-functions #'my/speed-dial-auto-refresh)
 (add-hook 'window-selection-change-functions #'my/speed-dial-prevent-focus)
-
 
 ;; ==========================================
 ;; 8.7 MODE TOGGLES & HYDRA OVERRIDES
 ;; ==========================================
 
-(defvar my/speed-dial-display-mode 'operational
-  "Visual mode for the speed dial. Can be 'tactical (Tmux bars) or 'operational (Hydra HUD).")
+(defvar my/speed-dial-display-mode 'operational)
 
 (defun my/speed-dial-tactical-mode ()
-  "Switch to tactical mode: Persistent Tmux bars ON, huge Hydra HUD OFF."
   (interactive)
   (setq my/speed-dial-display-mode 'tactical)
   (my/show-speed-dial-huds)
   (message "Speed Dial: TACTICAL mode active."))
 
 (defun my/speed-dial-operational-mode ()
-  "Switch to operational mode: Persistent Tmux bars OFF, huge Hydra HUD ON."
   (interactive)
   (setq my/speed-dial-display-mode 'operational)
   (my/hide-speed-dial-huds)
   (message "Speed Dial: OPERATIONAL mode active."))
 
 (defun my/toggle-speed-dial-hud ()
-  "Quick-toggle between Tactical and Operational visual modes."
   (interactive)
   (if (eq my/speed-dial-display-mode 'operational)
       (my/speed-dial-tactical-mode)
     (my/speed-dial-operational-mode)))
 
 (defun my/speed-dial-hydra-display-override (orig-fun &rest args)
-  "Intercepts the Hydra call. If we are in 'tactical' mode, completely silences the visual HUD."
-  ;; hydra-is-helpful is a built-in hydra variable. Binding it to nil prevents the popup!
   (let ((hydra-is-helpful (eq my/speed-dial-display-mode 'operational)))
     (apply orig-fun args)))
 
-;; Attach the override directly to the hydra engine
 (advice-add 'hydra-speed-dial/body :around #'my/speed-dial-hydra-display-override)
-
 
 ;; ==========================================
 ;; 9. KEYBINDINGS
 ;; ==========================================
 
-;; 1. The main entry point to open the speed-dial HUD
 (evil-define-key 'normal 'global (kbd "<leader> a") 'hydra-speed-dial/body)
-
-;; 2. Bookmark management
 (evil-define-key 'normal 'global (kbd "<leader> b p") 'my/project-bookmark-jump)
 (evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
 (evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
 
-;; 3. EVIL EX COMMANDS (Type :tactical or :operational in normal mode!)
 (evil-ex-define-cmd "slick" 'my/speed-dial-tactical-mode)
 (evil-ex-define-cmd "operational" 'my/speed-dial-operational-mode)
 
-;; ==========================================
-;; my-speed-dial.el ends here
-;; ==========================================
-
 (defun my/jump-to-inline-mark (char)
-  "Read a character, jump to MARK:<char> in the current buffer, and center the screen."
   (interactive "c")
   (let ((search-str (format "mark:%c" char))
         (orig-point (point)))
-    
-    ;; Save current location to Evil's jump list (allows C-o to jump back)
     (evil-set-jump)
-    
-    ;; Start search from the top
     (goto-char (point-min))
-    
     (let ((case-fold-search nil))
       (if (search-forward search-str nil t)
           (progn
-            ;; Move cursor to the start of the MARK string
             (goto-char (match-beginning 0))
-            
-            ;; Recenter the screen (exact equivalent of Vim's `zz`)
             (recenter)
-            
             (message "Jumped to %s" search-str))
-            
-        ;; If not found, go back and show error
         (goto-char orig-point)
         (message "Marker '%s' not found in this file" search-str)))))
 
-;; Bind <leader> b to the function
 (evil-define-key 'normal 'global (kbd "<leader> s") 'my/jump-to-inline-mark)
 
 (provide 'my-speed-dial)
