@@ -601,19 +601,24 @@ Displays the calculated breadcrumb path in the echo area."
   :hook ((c-mode . eglot-ensure)
          (c++-mode . eglot-ensure))
   :custom
+  ;; Ignore BOTH auto-formatting on type and inlay hints
   (eglot-ignored-server-capabilities '(:documentOnTypeFormattingProvider
                                        :inlayHintProvider))
   :config
+  ;; Tell Eglot to completely ignore Flymake (turns off annoying linting)
+  (add-to-list 'eglot-stay-out-of 'flymake)
+
   (setq eglot-events-buffer-config '(:size 0 :format short)) 
   
   (with-eval-after-load 'jsonrpc
     (fset #'jsonrpc--log-event #'ignore))
 
-  ;; CRITICAL: Tell Clangd to enable C++ modules!
+  ;; CRITICAL: Tell Clangd to enable C++ modules AND inject our Linux formatting rules directly!
   (add-to-list 'eglot-server-programs
                '((c++-mode c-mode)
                  "clangd"
-                 "--experimental-modules-support"))
+                 "--experimental-modules-support"
+                 "--fallback-style={BasedOnStyle: LLVM, IndentWidth: 8, TabWidth: 8, UseTab: Always, BreakBeforeBraces: Linux, IndentCaseLabels: false, BinPackArguments: false, BinPackParameters: false}"))
   
   (with-eval-after-load 'evil
     (evil-define-key 'normal eglot-mode-map
@@ -624,26 +629,33 @@ Displays the calculated breadcrumb path in the echo area."
       (kbd "g D") 'xref-find-references
       (kbd "K")   'eldoc)))
 
-;; indentation
-;; Use spaces for indentation
-(setq-default indent-tabs-mode nil)
 
-;; Set the width of tabs for display purposes (optional, as we use spaces)
-;;(setq-default tab-width 4)
+;; ==========================================
+;; C/C++ Indentation & Formatting (Linux Style)
+;; ==========================================
 
 ;; Tell the byte-compiler this variable exists to silence the warning
 (defvar c-basic-offset)
 
 ;; Define a function to set C/C++ specific indentation
 (defun my/c-c++-hook ()
-  "Custom settings for C and C++ modes.")
-  ;;(setq c-basic-offset 4)
-  ;; Ensure spaces are used for indentation within this mode
-  ;;(setq indent-tabs-mode nil))
+  "Custom settings for C and C++ modes (Linus Torvalds style)."
+  ;; Apply the built-in Linux kernel formatting style for Emacs typing
+  (c-set-style "linux")
+  
+  ;; Linus mandates 8-column wide indents
+  (setq c-basic-offset 8)
+  (setq tab-width 8)
+  
+  ;; Linus strictly uses real tabs, not spaces
+  (setq indent-tabs-mode t) 
+  
+  ;; Stop Emacs from fighting your manual line breaks
+  (electric-indent-local-mode -1))
 
 ;; Add this function to the hooks for C and C++ modes
-(add-hook 'c-mode-hook 'my/c-c++-hook)
-(add-hook 'c++-mode-hook 'my/c-c++-hook)
+(add-hook 'c-mode-hook #'my/c-c++-hook)
+(add-hook 'c++-mode-hook #'my/c-c++-hook)
 
 ;; ==========================================
 ;; 12. Vim-like Scrolling and End-of-Buffer
@@ -994,3 +1006,37 @@ Displays the calculated breadcrumb path in the echo area."
       (kbd "SPC") 'imenu-list-display-dwim
       (kbd "<escape>") 'imenu-list-quit-window
       (kbd "q") 'imenu-list-quit-window)))
+
+
+;; ==========================================
+;; 13. Disable Eglot coloring
+;; ==========================================
+
+;; 1. Disable Eglot's semantic highlighting from the language server
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-ignored-server-capabilities :semanticTokensProvider))
+
+;; 2. Strip colors from all syntax faces EXCEPT comments
+(defun mystrip-syntax-colors (&rest _)
+  "Make all code look like plain text, leaving only comments colored."
+  (dolist (face '(font-lock-builtin-face
+                  font-lock-constant-face
+                  font-lock-doc-face
+                  font-lock-function-name-face
+                  font-lock-keyword-face
+                  font-lock-string-face
+                  font-lock-type-face
+                  font-lock-variable-name-face
+                  font-lock-preprocessor-face))
+    (set-face-attribute face nil 
+                        :foreground 'unspecified 
+                        :background 'unspecified 
+                        :weight 'unspecified 
+                        :slant 'unspecified 
+                        :inherit 'default)))
+
+;; Run it once during startup
+(mystrip-syntax-colors)
+
+;; 3. Bulletproof: Re-apply the stripping immediately after any theme is loaded or toggled
+(advice-add 'load-theme :after #'mystrip-syntax-colors)
