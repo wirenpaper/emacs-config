@@ -984,7 +984,7 @@ Displays the calculated breadcrumb path in the echo area."
 (setq tramp-auto-save-directory my/emacs-recovery-dir)
 
 ;; ==========================================
-;; 13. VSCode-Style Function/Symbol Outline
+;; 6. VSCode-Style Function/Symbol Outline
 ;; ==========================================
 
 (use-package imenu-list
@@ -1009,7 +1009,7 @@ Displays the calculated breadcrumb path in the echo area."
 
 
 ;; ==========================================
-;; 13. Disable Eglot coloring
+;; 7. Disable Eglot coloring
 ;; ==========================================
 
 ;; 1. Disable Eglot's semantic highlighting from the language server

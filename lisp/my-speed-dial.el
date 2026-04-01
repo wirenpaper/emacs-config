@@ -770,7 +770,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (require 'subr-x)
 
 ;; ==========================================
-;; 8.5 PERSISTENT TMUX-STYLE HUD (TOP & BOTTOM)
+;; 9. PERSISTENT TMUX-STYLE HUD (TOP & BOTTOM)
 ;; ==========================================
 
 (defvar my/speed-dial-hud-buffer-name " *Speed-Dial-HUD*")
@@ -915,7 +915,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
         (fit-window-to-buffer win-bot nil 1)))))
 
 ;; ==========================================
-;; 8.6 HUD AUTO-UPDATE HOOKS & PROTECTIONS
+;; 10. HUD AUTO-UPDATE HOOKS & PROTECTIONS
 ;; ==========================================
 
 (defun my/speed-dial-auto-refresh (&rest _)
@@ -952,7 +952,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (add-hook 'window-selection-change-functions #'my/speed-dial-prevent-focus)
 
 ;; ==========================================
-;; 8.7 MODE TOGGLES & HYDRA OVERRIDES
+;; 11. MODE TOGGLES & HYDRA OVERRIDES
 ;; ==========================================
 
 (defvar my/speed-dial-display-mode 'operational)
@@ -982,7 +982,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (advice-add 'hydra-speed-dial/body :around #'my/speed-dial-hydra-display-override)
 
 ;; ==========================================
-;; 9. KEYBINDINGS
+;; 12. KEYBINDINGS
 ;; ==========================================
 
 (evil-define-key 'normal 'global (kbd "<leader> a") 'hydra-speed-dial/body)
