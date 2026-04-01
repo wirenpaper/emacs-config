@@ -562,6 +562,43 @@ Perfectly steps backwards through parent directories to disambiguate names."
         (my/refresh-speed-dial-hud))))
   (hydra-speed-dial/body))
 
+(defun my/sd-find-ancestor-with-globals (root)
+  "Walk up the directory tree from ROOT to find an ancestor with 'global' slots."
+  (let* ((current (directory-file-name (expand-file-name root)))
+         (parent (file-name-directory current))
+         (found nil))
+    (while (and parent
+                (not (string= parent current))
+                (not found))
+      (let* ((parent-dir (expand-file-name (file-name-as-directory parent)))
+             (count (caar (sqlite-select my/sd-db "SELECT count(*) FROM speed_dial WHERE workspace=? AND tag='global'" (list parent-dir)))))
+        (if (> count 0)
+            (setq found parent-dir)
+          (setq current (directory-file-name parent)
+                parent (file-name-directory current)))))
+    found))
+
+(defun my/hydra-inherit-global ()
+  "Inherit 'global' slots from the nearest ancestor workspace."
+  (interactive)
+  (unless my/current-workspace-root
+    (error "No workspace locked! Press 'p' to lock one first."))
+  (let* ((target-root (expand-file-name (file-name-as-directory my/current-workspace-root)))
+         (global-count (caar (sqlite-select my/sd-db "SELECT COUNT(*) FROM speed_dial WHERE workspace=? AND tag='global'" (list target-root)))))
+    (if (> global-count 0)
+        (message "Abort: Current workspace already has global slots! Untag them first.")
+      (let ((ancestor (my/sd-find-ancestor-with-globals target-root)))
+        (if (not ancestor)
+            (message "No ancestor workspace with global slots found in the database!")
+          (let ((rows (sqlite-select my/sd-db "SELECT slot, name, record FROM speed_dial WHERE workspace=? AND tag='global'" (list ancestor))))
+            (dolist (row rows)
+              ;; Insert verbatim. The absolute paths remain pointing to the ancestor's actual files!
+              (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, 'global', ?, ?, ?)"
+                              (list target-root (nth 0 row) (nth 1 row) (nth 2 row))))
+            (my/refresh-speed-dial-hud)
+            (message "Inherited %d global slots from '%s'!" (length rows) (file-name-nondirectory (directory-file-name ancestor))))))))
+  (hydra-speed-dial/body))
+
 (defun my/hydra-rename-tag ()
   (interactive)
   (let* ((root (my/get-workspace))
@@ -699,7 +736,7 @@ _f_: %s(my/sd-name 'left 4)  _;_: %s(my/sd-name 'right 4)  _M_: Toggle Move  _W_
 _z_: %s(my/sd-name 'left 5)  _m_: %s(my/sd-name 'right 5)  _O_: Organize HUD _X_: Nuke Workspace
 _x_: %s(my/sd-name 'left 6)  _,_: %s(my/sd-name 'right 6)  _A_: Anchor Known _P_: Clone Workspc
 _c_: %s(my/sd-name 'left 7)  _._: %s(my/sd-name 'right 7)  _p_: Lock New Dir _t_: Lock Tag
-_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     
+_v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_: Inherit Global
   "
   ("a" (my/speed-dial-jump "global" 1)) ("s" (my/speed-dial-jump "global" 2))
   ("d" (my/speed-dial-jump "global" 3)) ("f" (my/speed-dial-jump "global" 4))
@@ -721,6 +758,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD
   ("Y" my/hydra-copy-tag) ("X" my/hydra-wipe-workspace) 
   ("p" my/set-workspace-and-resume) ("P" my/hydra-clone-workspace) 
   ("A" my/hydra-anchor-workspace) ("t" my/set-tag-and-resume) 
+  ("I" my/hydra-inherit-global)
   ("q" my/hydra-quit) ("<escape>" my/hydra-quit) ("C-g" my/hydra-quit))
 
 ;; ==========================================
