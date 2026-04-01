@@ -81,33 +81,62 @@
     (error "No workspace locked! Use <leader> a p to select your target workspace"))
   my/current-workspace-root)
 
+(defun my/sd-get-absolute-path (record-str)
+  "Extract the absolute path safely from a serialized bookmark record."
+  (condition-case nil
+      (let* ((data (read record-str))
+             (file-path (alist-get 'filename data)))
+        (when file-path (expand-file-name file-path)))
+    (error nil)))
+
+(defun my/shortest-unique-path (target-path all-paths)
+  "Return the shortest suffix of TARGET-PATH that is unique among ALL-PATHS.
+Perfectly steps backwards through parent directories to disambiguate names."
+  (if (not target-path)
+      "?"
+    (let* ((exp-target (expand-file-name target-path))
+           (exp-others (remove exp-target (mapcar #'expand-file-name all-paths)))
+           (components (reverse (split-string exp-target "/" t)))
+           (current-suffix (car components))
+           (remaining-components (cdr components)))
+      (while (and exp-others
+                  (cl-some (lambda (other)
+                             (string-suffix-p (concat "/" current-suffix) other))
+                           exp-others)
+                  remaining-components)
+        (setq current-suffix (concat (car remaining-components) "/" current-suffix))
+        (setq remaining-components (cdr remaining-components)))
+      current-suffix)))
+
 (defun my/sd-name (side num)
-  "Fetch the name of the bookmark for a given side and slot number."
+  "Fetch the name of the bookmark for a given side and slot number, disambiguating duplicates."
   (let ((val "-"))
     (when my/current-workspace-root
       (let* ((root my/current-workspace-root)
              (tag (if (eq side 'left) "global" my/current-speed-dial-tag)))
         (when tag
           (let ((row (sqlite-select my/sd-db 
-                                    "SELECT name FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
+                                    "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                                     (list root tag num))))
             (when row
-              (let ((raw-name (caar row)))
-                (setq val (if (file-name-absolute-p raw-name) 
-                              (file-name-nondirectory raw-name) 
-                            raw-name))))))))
+              (let* ((raw-name (nth 0 (car row)))
+                     (record-str (nth 1 (car row)))
+                     (target-path (my/sd-get-absolute-path record-str)))
+                (if target-path
+                    (let* ((all-rows (sqlite-select my/sd-db "SELECT record FROM speed_dial WHERE workspace=?" (list root)))
+                           (all-paths (delq nil (mapcar (lambda (r) (my/sd-get-absolute-path (car r))) all-rows))))
+                      (setq val (my/shortest-unique-path target-path all-paths)))
+                  (setq val raw-name))))))))
     (truncate-string-to-width val 35 0 ?\s "…")))
 
 ;; --- STATE PERSISTENCE HELPERS ---
 
 (defun my/get-saved-workspace-tag (root)
-  "Retrieve the last used right-hand tag for the workspace ROOT."
   (let ((row (sqlite-select my/sd-db "SELECT value FROM state WHERE key=?" 
                             (list (concat "workspace_tag|" root)))))
     (when row (caar row))))
 
 (defun my/save-workspace-tag (root tag)
-  "Save TAG as the last active right-hand tag for workspace ROOT."
   (if tag
       (sqlite-execute my/sd-db "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)" 
                       (list (concat "workspace_tag|" root) tag))
@@ -115,12 +144,10 @@
                     (list (concat "workspace_tag|" root)))))
 
 (defun my/save-global-workspace-state (root)
-  "Save the globally active workspace so it restores on Emacs startup."
   (sqlite-execute my/sd-db "INSERT OR REPLACE INTO state (key, value) VALUES ('global_workspace', ?)" 
                   (list root)))
 
 (defun my/load-global-workspace-state ()
-  "Load the last active workspace on Emacs startup."
   (let ((row (sqlite-select my/sd-db "SELECT value FROM state WHERE key='global_workspace'")))
     (when row
       (let ((root (caar row)))
@@ -133,7 +160,6 @@
 ;; ==========================================
 
 (defun my/set-workspace ()
-  "Manually lock Emacs into a specific workspace directory."
   (interactive)
   (let* ((target-dir (read-directory-name "Select workspace directory: "))
          (root (expand-file-name (file-name-as-directory target-dir)))
@@ -147,7 +173,6 @@
     (my/refresh-speed-dial-hud)))
 
 (defun my/set-speed-dial-tag ()
-  "Choose a tag for the RIGHT hand keys in the locked workspace."
   (interactive)
   (let* ((root (my/get-workspace))
          (rows (sqlite-select my/sd-db "SELECT DISTINCT tag FROM speed_dial WHERE workspace=? AND tag != 'global'" (list root)))
@@ -166,10 +191,19 @@
   "Jump to any bookmark inside your manually locked workspace."
   (interactive)
   (if-let ((root my/current-workspace-root))
-      (let* ((rows (sqlite-select my/sd-db "SELECT name, tag, slot, record FROM speed_dial WHERE workspace=?" (list root)))
+      (let* ((all-rows (sqlite-select my/sd-db "SELECT record FROM speed_dial WHERE workspace=?" (list root)))
+             (all-paths (delq nil (mapcar (lambda (r) (my/sd-get-absolute-path (car r))) all-rows)))
+             (rows (sqlite-select my/sd-db "SELECT name, tag, slot, record FROM speed_dial WHERE workspace=?" (list root)))
              (choices (mapcar (lambda (row)
-                                (let ((name (nth 0 row)) (tag (nth 1 row)) (slot (nth 2 row)))
-                                  (cons (format "[%s-%d] %s" tag slot name) row)))
+                                (let* ((name (nth 0 row))
+                                       (tag (nth 1 row)) 
+                                       (slot (nth 2 row))
+                                       (record-str (nth 3 row))
+                                       (target-path (my/sd-get-absolute-path record-str))
+                                       (display-name (if target-path 
+                                                         (my/shortest-unique-path target-path all-paths) 
+                                                       name)))
+                                  (cons (format "[%s-%d] %s" tag slot display-name) row)))
                               rows)))
         (if choices
             (let* ((choice (completing-read "Workspace Bookmarks: " choices))
@@ -181,22 +215,27 @@
     (message "No workspace locked! Press '<leader> a p' to select one first.")))
 
 (defun my/bookmark-set-absolute ()
-  "Standard global Emacs bookmarking (bypasses SQLite)."
   (interactive)
   (call-interactively 'bookmark-set))
 
 (defun my/bookmark-tag-current-file ()
-  "Quickly tag the current file into the first available slot of a chosen tag."
   (interactive)
   (let* ((root (my/get-workspace))
          (tag (read-string (format "Assign to tag (default %s): " (or my/current-speed-dial-tag "main")) 
                            nil nil (or my/current-speed-dial-tag "main")))
          (record (bookmark-make-record))
-         ;; FIX: Store the full path to prevent identical filenames from overwriting each other
-         (name (if buffer-file-name buffer-file-name (car record)))
-         (data-str (prin1-to-string (cdr record))))
+         ;; We keep name simple to make Emacs' internal bookmark jump behave nicely
+         (name (if buffer-file-name (file-name-nondirectory buffer-file-name) (car record)))
+         (data-str (prin1-to-string (cdr record)))
+         (target-path (if buffer-file-name (expand-file-name buffer-file-name) nil)))
     
-    (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag name))
+    ;; Smart Deduplication: Search by EXACT extracted path to avoid dupes!
+    (let ((existing-slots (sqlite-select my/sd-db "SELECT slot, record FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
+      (dolist (es existing-slots)
+        (let* ((s (nth 0 es))
+               (p (my/sd-get-absolute-path (nth 1 es))))
+          (when (and target-path p (string= target-path p))
+            (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" (list root tag s))))))
     
     (let* ((used-slots (mapcar #'car (sqlite-select my/sd-db "SELECT slot FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
            (free-slot (cl-find-if-not (lambda (s) (member s used-slots)) '(1 2 3 4 5 6 7 8))))
@@ -204,7 +243,7 @@
           (message "Tag[%s] is full! All 8 slots are used." tag)
         (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                         (list root tag free-slot name data-str))
-        (message "Pinned '%s' to Slot %d on[%s]" (file-name-nondirectory name) free-slot tag)
+        (message "Pinned to Slot %d on[%s]" free-slot tag)
         (my/refresh-speed-dial-hud)))))
 
 ;; ==========================================
@@ -212,14 +251,12 @@
 ;; ==========================================
 
 (defun my/sd-generate-record-for (target)
-  "Generate a fresh bookmark record for a file without opening its buffer permanently."
   (if target
       (with-current-buffer (find-file-noselect target)
         (bookmark-make-record))
     (bookmark-make-record)))
 
 (defun my/speed-dial-jump (tag num)
-  "Jump to the NUM-th slot of TAG, or handle Move, Tag, and Untag modes."
   (when (and (not tag) (or (eq my/speed-dial-mode 'tag) (eq my/speed-dial-mode 'drop)))
     (let ((root (my/get-workspace)))
       (setq tag "main")
@@ -253,24 +290,28 @@
                 (my/refresh-speed-dial-hud)
                 (hydra-speed-dial/body))
                ((and exp-path (not (file-directory-p exp-path)))
-                ;; Use find-file for actual files so save-place-mode handles cursor position!
                 (let ((buf (find-buffer-visiting exp-path)))
                   (if buf (switch-to-buffer buf) (find-file exp-path)))
-                (my/refresh-speed-dial-hud)) ;; EXPLICIT FORCE UPDATE FOR PDFs
+                (my/refresh-speed-dial-hud)) 
                (t 
-                ;; Let Emacs's bookmark engine handle Magit, Dired, etc.
                 (bookmark-jump (cons name data))
-                (my/refresh-speed-dial-hud)))) ;; EXPLICIT FORCE UPDATE FOR PDFs
+                (my/refresh-speed-dial-hud))))
           (message "Empty slot")))
 
-       ;; --- TAG MODE (NON-DESTRUCTIVE CASCADE) ---
+       ;; --- TAG MODE ---
        ((eq my/speed-dial-mode 'tag)
         (let* ((record (my/sd-generate-record-for my/pending-tag-target))
-               ;; FIX: Keep absolute path in moving-name
-               (moving-name (if my/pending-tag-target my/pending-tag-target (car record)))
-               (moving-data (prin1-to-string (cdr record))))
+               (moving-name (if my/pending-tag-target (file-name-nondirectory my/pending-tag-target) (car record)))
+               (moving-data (prin1-to-string (cdr record)))
+               (target-path (if my/pending-tag-target (expand-file-name my/pending-tag-target) nil)))
           
-          (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" (list root tag moving-name))
+          ;; Deduplicate before tag shift
+          (let ((existing-slots (sqlite-select my/sd-db "SELECT slot, record FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
+            (dolist (es existing-slots)
+              (let* ((s (nth 0 es))
+                     (p (my/sd-get-absolute-path (nth 1 es))))
+                (when (and target-path p (string= target-path p))
+                  (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" (list root tag s))))))
           
           (let ((current-name moving-name)
                 (current-data moving-data))
@@ -287,7 +328,7 @@
           (setq my/speed-dial-mode 'normal
                 my/pending-tag-target nil)
           (my/refresh-speed-dial-hud)
-          (message "Tagged '%s' to slot %d on [%s]!" (file-name-nondirectory moving-name) num tag)
+          (message "Tagged to slot %d on [%s]!" num tag)
           (hydra-speed-dial/body)))
 
        ;; --- PICK MODE ---
@@ -298,7 +339,7 @@
           (setq my/speed-dial-mode 'drop))
         (hydra-speed-dial/body))
 
-       ;; --- DROP MODE (SWAP vs SHIFT LOGIC) ---
+       ;; --- DROP MODE ---
        ((eq my/speed-dial-mode 'drop)
         (let* ((old-tag (car my/pending-move-src))
                (old-slot (cdr my/pending-move-src))
@@ -309,37 +350,31 @@
                   (moving-data (nth 1 (car old-row))))
               
               (if (string= old-tag tag)
-                  ;; =========================================
-                  ;; 1. SAME SIDE (SWAP)
-                  ;; =========================================
                   (unless (= old-slot num)
                     (let ((target-occupant (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                                                           (list root tag num))))
-                      ;; Overwrite the destination slot with the item we are carrying
                       (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                                       (list root tag num moving-name moving-data))
-                      
-                      ;; Put the displaced target occupant back into the source slot
                       (if target-occupant
                           (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, ?, ?, ?, ?)"
                                           (list root old-tag old-slot (nth 0 (car target-occupant)) (nth 1 (car target-occupant))))
-                        ;; If target was empty, just clear the old source slot
                         (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                                         (list root old-tag old-slot)))
-                      (message "Swapped '%s' to slot %d!" (file-name-nondirectory moving-name) num)))
+                      (message "Swapped slot %d!" num)))
 
-                ;; =========================================
-                ;; 2. DIFFERENT SIDES (SHIFT / CASCADE)
-                ;; =========================================
                 (progn
-                  ;; Delete item from old slot completely
                   (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                                   (list root old-tag old-slot))
-                  ;; Prevent duplicates on the new side
-                  (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND name=?" 
-                                  (list root tag moving-name))
                   
-                  ;; Perform the Cascade Shift down the list
+                  ;; Prevent duplicates on the new side
+                  (let ((target-path (my/sd-get-absolute-path moving-data))
+                        (existing-slots (sqlite-select my/sd-db "SELECT slot, record FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
+                    (dolist (es existing-slots)
+                      (let* ((s (nth 0 es))
+                             (p (my/sd-get-absolute-path (nth 1 es))))
+                        (when (and target-path p (string= target-path p))
+                          (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" (list root tag s))))))
+                  
                   (let ((current-name moving-name)
                         (current-data moving-data))
                     (cl-loop for s from num to 8 do
@@ -351,9 +386,8 @@
                                    (setq current-name (nth 0 (car occupant))
                                          current-data (nth 1 (car occupant)))
                                  (cl-return)))))
-                  (message "Moved '%s' across sides to slot %d (shifted others down)!" (file-name-nondirectory moving-name) num)))))
+                  (message "Moved across sides to slot %d (shifted others down)!" num)))))
           
-          ;; Cleanup and reset mode
           (setq my/speed-dial-mode 'normal
                 my/pending-move-src nil)
           (my/refresh-speed-dial-hud)
@@ -374,7 +408,6 @@
 ;; ==========================================
 
 (defun my/hydra-consolidate-slots ()
-  "Remove all gaps by shifting filled slots to be contiguous starting from slot 1."
   (interactive)
   (let* ((root (my/get-workspace))
          (tags (list "global" my/current-speed-dial-tag))
@@ -398,7 +431,6 @@
   (hydra-speed-dial/body))
 
 (defun my/hydra-find-and-tag ()
-  "Find a file to pin without visiting it immediately."
   (interactive)
   (setq my/speed-dial-mode 'tag)
   (setq my/pending-tag-target nil)
@@ -688,30 +720,23 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _t_: Lock Tag     | _
 (defvar my/speed-dial-global-hud-buffer-name " *Speed-Dial-Global-HUD*")
 
 (defun my/sd-generate-hud-string (keys side active-buf active-file)
-  "Generates the flexbox string for a HUD bar, given the keys and the side (left/right)."
   (let* ((items (cl-loop for i from 1 to 8
                          for k in keys
-                         ;; Fetch the raw name from DB to verify absolute paths for highlighting
-                         for raw-name-row = (sqlite-select my/sd-db "SELECT name FROM speed_dial WHERE workspace=? AND tag=? AND slot=?"
-                                                           (list my/current-workspace-root (if (eq side 'left) "global" my/current-speed-dial-tag) i))
-                         for raw-name = (if raw-name-row (caar raw-name-row) nil)
+                         for row = (sqlite-select my/sd-db "SELECT record FROM speed_dial WHERE workspace=? AND tag=? AND slot=?"
+                                                  (list my/current-workspace-root (if (eq side 'left) "global" my/current-speed-dial-tag) i))
+                         for record-str = (if row (caar row) nil)
+                         for target-path = (if record-str (my/sd-get-absolute-path record-str) nil)
                          for ui-name = (my/sd-name side i)
                          for clean-name = (string-trim (substring-no-properties ui-name))
                          unless (string= clean-name "-")
                          collect 
-                         (let* ((b-name (and active-buf (substring-no-properties active-buf)))
-                                (f-name (and active-file (file-name-nondirectory (substring-no-properties active-file))))
-                                (a-path (and active-file (expand-file-name (substring-no-properties active-file))))
-                                
-                                (is-truncated (string-suffix-p "…" clean-name))
-                                (base-name (if is-truncated (substring clean-name 0 -1) clean-name))
-                                
-                                ;; FIX: Smart check. If DB name is full path, match exact path to prevent 
-                                ;; identical filenames from glowing simultaneously.
-                                (is-active (if (and a-path raw-name (file-name-absolute-p raw-name))
-                                               (string= (expand-file-name raw-name) a-path)
-                                             (or (and b-name (if is-truncated (string-prefix-p base-name b-name) (string= base-name b-name)))
-                                                 (and f-name (if is-truncated (string-prefix-p base-name f-name) (string= base-name f-name))))))
+                         (let* ((a-path (and active-file (expand-file-name (substring-no-properties active-file))))
+                                ;; EXACT MATCHING powered directly by the Emacs bookmark record paths!
+                                (is-active (if (and target-path a-path)
+                                               (string= target-path a-path)
+                                             ;; Fallback for Magit/Dired buffers without files
+                                             (let ((b-name (and active-buf (substring-no-properties active-buf))))
+                                               (and b-name (string= clean-name b-name)))))
                                 
                                 (sep (if is-active "→" ")"))
                                 (key-face '(:weight bold :underline (:style wave)))
