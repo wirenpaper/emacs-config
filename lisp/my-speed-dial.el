@@ -224,12 +224,10 @@ Perfectly steps backwards through parent directories to disambiguate names."
          (tag (read-string (format "Assign to tag (default %s): " (or my/current-speed-dial-tag "main")) 
                            nil nil (or my/current-speed-dial-tag "main")))
          (record (bookmark-make-record))
-         ;; We keep name simple to make Emacs' internal bookmark jump behave nicely
          (name (if buffer-file-name (file-name-nondirectory buffer-file-name) (car record)))
          (data-str (prin1-to-string (cdr record)))
          (target-path (if buffer-file-name (expand-file-name buffer-file-name) nil)))
     
-    ;; Smart Deduplication: Search by EXACT extracted path to avoid dupes!
     (let ((existing-slots (sqlite-select my/sd-db "SELECT slot, record FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
       (dolist (es existing-slots)
         (let* ((s (nth 0 es))
@@ -305,7 +303,6 @@ Perfectly steps backwards through parent directories to disambiguate names."
                (moving-data (prin1-to-string (cdr record)))
                (target-path (if my/pending-tag-target (expand-file-name my/pending-tag-target) nil)))
           
-          ;; Deduplicate before tag shift
           (let ((existing-slots (sqlite-select my/sd-db "SELECT slot, record FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
             (dolist (es existing-slots)
               (let* ((s (nth 0 es))
@@ -366,7 +363,6 @@ Perfectly steps backwards through parent directories to disambiguate names."
                   (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag=? AND slot=?" 
                                   (list root old-tag old-slot))
                   
-                  ;; Prevent duplicates on the new side
                   (let ((target-path (my/sd-get-absolute-path moving-data))
                         (existing-slots (sqlite-select my/sd-db "SELECT slot, record FROM speed_dial WHERE workspace=? AND tag=?" (list root tag))))
                     (dolist (es existing-slots)
@@ -579,24 +575,53 @@ Perfectly steps backwards through parent directories to disambiguate names."
     found))
 
 (defun my/hydra-inherit-global ()
-  "Inherit 'global' slots from the nearest ancestor workspace."
+  "Inherit 'global' slots from the nearest ancestor workspace.
+Cascades dynamically if the current workspace already has items in those slots."
   (interactive)
   (unless my/current-workspace-root
     (error "No workspace locked! Press 'p' to lock one first."))
+  
   (let* ((target-root (expand-file-name (file-name-as-directory my/current-workspace-root)))
-         (global-count (caar (sqlite-select my/sd-db "SELECT COUNT(*) FROM speed_dial WHERE workspace=? AND tag='global'" (list target-root)))))
-    (if (> global-count 0)
-        (message "Abort: Current workspace already has global slots! Untag them first.")
-      (let ((ancestor (my/sd-find-ancestor-with-globals target-root)))
-        (if (not ancestor)
-            (message "No ancestor workspace with global slots found in the database!")
-          (let ((rows (sqlite-select my/sd-db "SELECT slot, name, record FROM speed_dial WHERE workspace=? AND tag='global'" (list ancestor))))
-            (dolist (row rows)
-              ;; Insert verbatim. The absolute paths remain pointing to the ancestor's actual files!
-              (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, 'global', ?, ?, ?)"
-                              (list target-root (nth 0 row) (nth 1 row) (nth 2 row))))
-            (my/refresh-speed-dial-hud)
-            (message "Inherited %d global slots from '%s'!" (length rows) (file-name-nondirectory (directory-file-name ancestor))))))))
+         (global-count (caar (sqlite-select my/sd-db "SELECT COUNT(*) FROM speed_dial WHERE workspace=? AND tag='global'" (list target-root))))
+         (ancestor (my/sd-find-ancestor-with-globals target-root)))
+    
+    (if (not ancestor)
+        (message "No ancestor workspace with global slots found in the database!")
+      
+      ;; If globals exist, ask for confirmation before merging/cascading
+      (when (or (= global-count 0)
+                (y-or-n-p (format "Workspace already has %d global slots. Merge and cascade inherited slots? " global-count)))
+        
+        (let ((rows (sqlite-select my/sd-db "SELECT slot, name, record FROM speed_dial WHERE workspace=? AND tag='global'" (list ancestor))))
+          (dolist (row rows)
+            (let* ((target-slot (nth 0 row))
+                   (moving-name (nth 1 row))
+                   (moving-data (nth 2 row))
+                   (target-path (my/sd-get-absolute-path moving-data)))
+              
+              ;; 1. Deduplication pass: Remove this exact file if it's already anywhere in the target's globals
+              (let ((existing-slots (sqlite-select my/sd-db "SELECT slot, record FROM speed_dial WHERE workspace=? AND tag='global'" (list target-root))))
+                (dolist (es existing-slots)
+                  (let* ((s (nth 0 es))
+                         (p (my/sd-get-absolute-path (nth 1 es))))
+                    (when (and target-path p (string= target-path p))
+                      (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag='global' AND slot=?" (list target-root s))))))
+              
+              ;; 2. The Physics Engine: Insert and Cascade down from the target slot
+              (let ((current-name moving-name)
+                    (current-data moving-data))
+                (cl-loop for s from target-slot to 8 do
+                         (let ((occupant (sqlite-select my/sd-db "SELECT name, record FROM speed_dial WHERE workspace=? AND tag='global' AND slot=?" 
+                                                        (list target-root s))))
+                           (sqlite-execute my/sd-db "INSERT OR REPLACE INTO speed_dial (workspace, tag, slot, name, record) VALUES (?, 'global', ?, ?, ?)"
+                                           (list target-root s current-name current-data))
+                           (if occupant
+                               (setq current-name (nth 0 (car occupant))
+                                     current-data (nth 1 (car occupant)))
+                             (cl-return)))))))
+          
+          (my/refresh-speed-dial-hud)
+          (message "Inherited %d global slots from '%s'!" (length rows) (file-name-nondirectory (directory-file-name ancestor)))))))
   (hydra-speed-dial/body))
 
 (defun my/hydra-rename-tag ()
@@ -770,7 +795,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (require 'subr-x)
 
 ;; ==========================================
-;; 9. PERSISTENT TMUX-STYLE HUD (TOP & BOTTOM)
+;; 8.5 PERSISTENT TMUX-STYLE HUD (TOP & BOTTOM)
 ;; ==========================================
 
 (defvar my/speed-dial-hud-buffer-name " *Speed-Dial-HUD*")
@@ -915,7 +940,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
         (fit-window-to-buffer win-bot nil 1)))))
 
 ;; ==========================================
-;; 10. HUD AUTO-UPDATE HOOKS & PROTECTIONS
+;; 8.6 HUD AUTO-UPDATE HOOKS & PROTECTIONS
 ;; ==========================================
 
 (defun my/speed-dial-auto-refresh (&rest _)
@@ -952,7 +977,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (add-hook 'window-selection-change-functions #'my/speed-dial-prevent-focus)
 
 ;; ==========================================
-;; 11. MODE TOGGLES & HYDRA OVERRIDES
+;; 8.7 MODE TOGGLES & HYDRA OVERRIDES
 ;; ==========================================
 
 (defvar my/speed-dial-display-mode 'operational)
@@ -961,13 +986,13 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
   (interactive)
   (setq my/speed-dial-display-mode 'tactical)
   (my/show-speed-dial-huds)
-  (message "Speed Dial: COMMAND mode active."))
+  (message "Speed Dial: TACTICAL mode active."))
 
 (defun my/speed-dial-operational-mode ()
   (interactive)
   (setq my/speed-dial-display-mode 'operational)
   (my/hide-speed-dial-huds)
-  (message "Speed Dial: MENU mode active."))
+  (message "Speed Dial: OPERATIONAL mode active."))
 
 (defun my/toggle-speed-dial-hud ()
   (interactive)
@@ -982,7 +1007,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (advice-add 'hydra-speed-dial/body :around #'my/speed-dial-hydra-display-override)
 
 ;; ==========================================
-;; 12. KEYBINDINGS
+;; 9. KEYBINDINGS
 ;; ==========================================
 
 (evil-define-key 'normal 'global (kbd "<leader> a") 'hydra-speed-dial/body)
@@ -990,8 +1015,8 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
 (evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
 
-(evil-ex-define-cmd "command" 'my/speed-dial-tactical-mode)
-(evil-ex-define-cmd "menu" 'my/speed-dial-operational-mode)
+(evil-ex-define-cmd "slick" 'my/speed-dial-tactical-mode)
+(evil-ex-define-cmd "operational" 'my/speed-dial-operational-mode)
 
 (defun my/jump-to-inline-mark (char)
   (interactive "c")
