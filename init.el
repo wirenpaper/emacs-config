@@ -344,6 +344,7 @@
 (use-package eat
   :hook ((eshell-load . eat-eshell-visual-command-mode)
          (eshell-load . eat-eshell-mode))
+
   :init
   (with-eval-after-load 'evil
     (evil-define-key 'normal 'global
@@ -351,6 +352,12 @@
       (kbd "<leader> e f") 'my/eshell-current-file-dir))
   :config
   (evil-set-initial-state 'eat-mode 'emacs))
+
+(defun eshell/vi (&rest files)
+  "Alias the vi command to `find-file' in Eshell. Opens files directly in Emacs."
+  (if files
+      (mapc #'find-file files)
+    (message "Usage: vi <filename>")))
 
 (defun my/eshell-clear-buffer ()
   "Instantly clear the Eshell buffer, like `clear' in bash."
