@@ -505,7 +505,7 @@ Fetches workspaces from SQLite and sorts them by closest path proximity."
   (setq my/speed-dial-mode 'tag)
   (setq my/pending-tag-target nil)
   (let* ((original-dir default-directory)
-         (show-hud (eq my/speed-dial-display-mode 'operational))
+         (show-hud (eq my/speed-dial-display-mode 'menu))
          (buf (when show-hud (get-buffer-create " *Speed-Dial HUD*")))
          (win nil)
          (selected-file nil)
@@ -1061,28 +1061,28 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 ;; 8.7 MODE TOGGLES & HYDRA OVERRIDES
 ;; ==========================================
 
-(defvar my/speed-dial-display-mode 'operational)
+(defvar my/speed-dial-display-mode 'menu)
 
-(defun my/speed-dial-tactical-mode ()
+(defun my/speed-dial-command-mode ()
   (interactive)
-  (setq my/speed-dial-display-mode 'tactical)
+  (setq my/speed-dial-display-mode 'command)
   (my/show-speed-dial-huds)
   (message "Speed Dial: COMMAND mode active."))
 
-(defun my/speed-dial-operational-mode ()
+(defun my/speed-dial-menu-mode ()
   (interactive)
-  (setq my/speed-dial-display-mode 'operational)
+  (setq my/speed-dial-display-mode 'menu)
   (my/hide-speed-dial-huds)
   (message "Speed Dial: MENU mode active."))
 
 (defun my/toggle-speed-dial-hud ()
   (interactive)
-  (if (eq my/speed-dial-display-mode 'operational)
-      (my/speed-dial-tactical-mode)
-    (my/speed-dial-operational-mode)))
+  (if (eq my/speed-dial-display-mode 'menu)
+      (my/speed-dial-command-mode)
+    (my/speed-dial-menu-mode)))
 
 (defun my/speed-dial-hydra-display-override (orig-fun &rest args)
-  (let ((hydra-is-helpful (eq my/speed-dial-display-mode 'operational)))
+  (let ((hydra-is-helpful (eq my/speed-dial-display-mode 'menu)))
     (apply orig-fun args)))
 
 (advice-add 'hydra-speed-dial/body :around #'my/speed-dial-hydra-display-override)
@@ -1096,8 +1096,8 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
 (evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
 
-(evil-ex-define-cmd "command" 'my/speed-dial-tactical-mode)
-(evil-ex-define-cmd "menu" 'my/speed-dial-operational-mode)
+(evil-ex-define-cmd "command" 'my/speed-dial-command-mode)
+(evil-ex-define-cmd "menu" 'my/speed-dial-menu-mode)
 
 (defun my/jump-to-inline-mark (char)
   (interactive "c")
