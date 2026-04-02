@@ -159,18 +159,30 @@ Perfectly steps backwards through parent directories to disambiguate names."
 ;; 4. WORKSPACE & TAGGING LOGIC
 ;; ==========================================
 
-(defun my/set-workspace ()
-  (interactive)
-  (let* ((target-dir (read-directory-name "Select workspace directory: "))
-         (root (expand-file-name (file-name-as-directory target-dir)))
+(defun my/lock-workspace-to-dir (dir)
+  "Core logic to lock the workspace to a specific directory."
+  (let* ((root (expand-file-name (file-name-as-directory dir)))
          (saved-tag (my/get-saved-workspace-tag root)))
     (setq my/current-workspace-root root)
     (setq my/current-speed-dial-tag saved-tag)
     (my/save-global-workspace-state root)
+    (my/refresh-speed-dial-hud)
     (if saved-tag
         (message "Workspace locked to: %s (Restored tag: [%s])" root saved-tag)
-      (message "Workspace locked to: %s" root))
-    (my/refresh-speed-dial-hud)))
+      (message "Workspace locked to: %s" root))))
+
+(defun my/set-workspace ()
+  "Interactively select and lock a workspace via minibuffer."
+  (interactive)
+  (my/lock-workspace-to-dir (read-directory-name "Select workspace directory: ")))
+
+(defun eshell/plant (&optional dir)
+  "Eshell command to lock the speed-dial workspace.
+Usage: plant ~/my/project
+If no directory is provided, it locks to the current Eshell directory."
+  (my/lock-workspace-to-dir (or dir default-directory))
+  ;; Return an empty string so Eshell doesn't echo the return value into the buffer
+  "")
 
 (defun my/set-speed-dial-tag ()
   (interactive)
@@ -588,7 +600,6 @@ Cascades dynamically if the current workspace already has items in those slots."
     (if (not ancestor)
         (message "No ancestor workspace with global slots found in the database!")
       
-      ;; If globals exist, ask for confirmation before merging/cascading
       (when (or (= global-count 0)
                 (y-or-n-p (format "Workspace already has %d global slots. Merge and cascade inherited slots? " global-count)))
         
@@ -599,7 +610,6 @@ Cascades dynamically if the current workspace already has items in those slots."
                    (moving-data (nth 2 row))
                    (target-path (my/sd-get-absolute-path moving-data)))
               
-              ;; 1. Deduplication pass: Remove this exact file if it's already anywhere in the target's globals
               (let ((existing-slots (sqlite-select my/sd-db "SELECT slot, record FROM speed_dial WHERE workspace=? AND tag='global'" (list target-root))))
                 (dolist (es existing-slots)
                   (let* ((s (nth 0 es))
@@ -607,7 +617,6 @@ Cascades dynamically if the current workspace already has items in those slots."
                     (when (and target-path p (string= target-path p))
                       (sqlite-execute my/sd-db "DELETE FROM speed_dial WHERE workspace=? AND tag='global' AND slot=?" (list target-root s))))))
               
-              ;; 2. The Physics Engine: Insert and Cascade down from the target slot
               (let ((current-name moving-name)
                     (current-data moving-data))
                 (cl-loop for s from target-slot to 8 do
