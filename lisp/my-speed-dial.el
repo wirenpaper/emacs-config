@@ -201,6 +201,10 @@ Use TAB to autocomplete, sorted by proximity to your current location."
     (my/lock-workspace-to-dir dir))
   "")
 
+;; Tell the byte-compiler this is a dynamic variable used by Eshell/Pcomplete
+;; This prevents the "Unused lexical variable" warning in your compilation log!
+(defvar pcomplete-sort-function)
+
 (defun pcomplete/anchor ()
   "Programmable completion for the `anchor` Eshell command.
 Fetches workspaces from SQLite and sorts them by closest path proximity."
@@ -215,7 +219,32 @@ Fetches workspaces from SQLite and sorts them by closest path proximity."
                            (if (= len-a len-b)
                                (string< a b)
                              (> len-a len-b)))))))
-    (pcomplete-here sorted)))
+    ;; Disable Eshell's internal alphabetical sorting
+    (let ((pcomplete-sort-function nil))
+      (pcomplete-here sorted))))
+
+;; --- THE CORFU / CAPF SORTING SHIELD ---
+(defun my/sd-pcomplete-sort-override (orig-fn &rest args)
+  "Force Corfu/Capf to respect proximity sorting for the `anchor` Eshell command."
+  (let ((res (apply orig-fn args)))
+    (when (and res (listp res))
+      (let* ((start (nth 0 res))
+             ;; Get the text just before the completion started
+             (line-prefix (buffer-substring-no-properties (line-beginning-position) start)))
+        ;; If the command being completed is 'anchor'
+        (when (string-match-p "\\banchor\\s-+$" line-prefix)
+          (let ((table (nth 2 res)))
+            ;; Wrap the completion table to inject metadata that stops Corfu from sorting
+            (setcar (nthcdr 2 res)
+                    (lambda (string pred action)
+                      (if (eq action 'metadata)
+                          '(metadata (display-sort-function . identity)
+                                     (cycle-sort-function . identity))
+                        (complete-with-action action table string pred))))))))
+    res))
+
+(with-eval-after-load 'pcomplete
+  (advice-add 'pcomplete-completions-at-point :around #'my/sd-pcomplete-sort-override))
 
 (defun my/set-speed-dial-tag ()
   (interactive)
@@ -600,7 +629,15 @@ UI Completion is sorted by closest proximity to your current location."
                                           (if (= len-a len-b)
                                               (string< a b)
                                             (> len-a len-b))))))
-             (choice (completing-read "Anchor to known workspace: " sorted-workspaces nil t))
+             
+             ;; OVERRIDE EMACS COMPLETION SORTING: Wrap in metadata to block Vertico/Ivy/Helm
+             (completion-table (lambda (string pred action)
+                                 (if (eq action 'metadata)
+                                     '(metadata (display-sort-function . identity)
+                                                (cycle-sort-function . identity))
+                                   (complete-with-action action sorted-workspaces string pred))))
+             
+             (choice (completing-read "Anchor to known workspace: " completion-table nil t))
              (root (expand-file-name choice)))
         (my/lock-workspace-to-dir root))))
   (hydra-speed-dial/body))
