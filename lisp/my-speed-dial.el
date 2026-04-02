@@ -3,6 +3,7 @@
 (require 'bookmark)
 (require 'cl-lib)
 (require 'sqlite)
+(require 'pcomplete)
 
 ;; Let the compiler know about use-package
 (eval-when-compile
@@ -108,6 +109,15 @@ Perfectly steps backwards through parent directories to disambiguate names."
         (setq remaining-components (cdr remaining-components)))
       current-suffix)))
 
+(defun my/shared-prefix-len (s1 s2)
+  "Returns the length of the shared directory prefix between two paths.
+Used to rank directories by 'closeness' to the current workspace."
+  (let ((tc (try-completion "" (list s1 s2))))
+    (cond
+     ((eq tc t) (length s1))
+     ((stringp tc) (length tc))
+     (t 0))))
+
 (defun my/sd-name (side num)
   "Fetch the name of the bookmark for a given side and slot number, disambiguating duplicates."
   (let ((val "-"))
@@ -177,12 +187,35 @@ Perfectly steps backwards through parent directories to disambiguate names."
   (my/lock-workspace-to-dir (read-directory-name "Select workspace directory: ")))
 
 (defun eshell/plant (&optional dir)
-  "Eshell command to lock the speed-dial workspace.
+  "Eshell command: Lock the speed-dial workspace.
 Usage: plant ~/my/project
-If no directory is provided, it locks to the current Eshell directory."
+If no directory is provided, locks to the current Eshell directory."
   (my/lock-workspace-to-dir (or dir default-directory))
-  ;; Return an empty string so Eshell doesn't echo the return value into the buffer
   "")
+
+(defun eshell/anchor (&optional dir)
+  "Eshell command: Switch speed-dial workspace to a known database directory.
+Use TAB to autocomplete, sorted by proximity to your current location."
+  (if (not dir)
+      (message "Usage: anchor <workspace-path> (Use TAB to autocomplete)")
+    (my/lock-workspace-to-dir dir))
+  "")
+
+(defun pcomplete/anchor ()
+  "Programmable completion for the `anchor` Eshell command.
+Fetches workspaces from SQLite and sorts them by closest path proximity."
+  (let* ((curr (or my/current-workspace-root default-directory))
+         (rows (sqlite-select my/sd-db "SELECT DISTINCT workspace FROM speed_dial"))
+         (workspaces (mapcar #'car rows))
+         ;; Sort descending by length of shared directory path
+         (sorted (sort workspaces
+                       (lambda (a b)
+                         (let ((len-a (my/shared-prefix-len curr a))
+                               (len-b (my/shared-prefix-len curr b)))
+                           (if (= len-a len-b)
+                               (string< a b)
+                             (> len-a len-b)))))))
+    (pcomplete-here sorted)))
 
 (defun my/set-speed-dial-tag ()
   (interactive)
@@ -552,22 +585,24 @@ If no directory is provided, it locks to the current Eshell directory."
 (defun my/set-tag-and-resume ()       (interactive) (call-interactively 'my/set-speed-dial-tag) (hydra-speed-dial/body))
 
 (defun my/hydra-anchor-workspace ()
-  "Quickly switch to a previously used workspace stored in the database."
+  "Quickly switch to a previously used workspace stored in the database.
+UI Completion is sorted by closest proximity to your current location."
   (interactive)
   (let* ((rows (sqlite-select my/sd-db "SELECT DISTINCT workspace FROM speed_dial"))
          (workspaces (mapcar #'car rows)))
     (if (not workspaces)
         (message "No saved workspaces found in the database! Use 'p' to lock a new one.")
-      (let* ((choice (completing-read "Anchor to known workspace: " workspaces nil t))
-             (root (expand-file-name choice))
-             (saved-tag (my/get-saved-workspace-tag root)))
-        (setq my/current-workspace-root root)
-        (setq my/current-speed-dial-tag saved-tag)
-        (my/save-global-workspace-state root)
-        (if saved-tag
-            (message "Anchored to: %s (Restored tag: [%s])" root saved-tag)
-          (message "Anchored to: %s" root))
-        (my/refresh-speed-dial-hud))))
+      (let* ((curr (or my/current-workspace-root default-directory))
+             (sorted-workspaces (sort workspaces
+                                      (lambda (a b)
+                                        (let ((len-a (my/shared-prefix-len curr a))
+                                              (len-b (my/shared-prefix-len curr b)))
+                                          (if (= len-a len-b)
+                                              (string< a b)
+                                            (> len-a len-b))))))
+             (choice (completing-read "Anchor to known workspace: " sorted-workspaces nil t))
+             (root (expand-file-name choice)))
+        (my/lock-workspace-to-dir root))))
   (hydra-speed-dial/body))
 
 (defun my/sd-find-ancestor-with-globals (root)
@@ -995,13 +1030,13 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
   (interactive)
   (setq my/speed-dial-display-mode 'tactical)
   (my/show-speed-dial-huds)
-  (message "Speed Dial: COMMAND mode active."))
+  (message "Speed Dial: TACTICAL mode active."))
 
 (defun my/speed-dial-operational-mode ()
   (interactive)
   (setq my/speed-dial-display-mode 'operational)
   (my/hide-speed-dial-huds)
-  (message "Speed Dial: MENU mode active."))
+  (message "Speed Dial: OPERATIONAL mode active."))
 
 (defun my/toggle-speed-dial-hud ()
   (interactive)
@@ -1024,8 +1059,8 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
 (evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
 
-(evil-ex-define-cmd "command" 'my/speed-dial-tactical-mode)
-(evil-ex-define-cmd "menu" 'my/speed-dial-operational-mode)
+(evil-ex-define-cmd "slick" 'my/speed-dial-tactical-mode)
+(evil-ex-define-cmd "operational" 'my/speed-dial-operational-mode)
 
 (defun my/jump-to-inline-mark (char)
   (interactive "c")
