@@ -986,13 +986,13 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
   (interactive)
   (setq my/speed-dial-display-mode 'tactical)
   (my/show-speed-dial-huds)
-  (message "Speed Dial: TACTICAL mode active."))
+  (message "Speed Dial: COMMAND mode active."))
 
 (defun my/speed-dial-operational-mode ()
   (interactive)
   (setq my/speed-dial-display-mode 'operational)
   (my/hide-speed-dial-huds)
-  (message "Speed Dial: OPERATIONAL mode active."))
+  (message "Speed Dial: MENU mode active."))
 
 (defun my/toggle-speed-dial-hud ()
   (interactive)
@@ -1015,8 +1015,8 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 (evil-define-key 'normal 'global (kbd "<leader> b m") 'my/bookmark-set-absolute)
 (evil-define-key 'normal 'global (kbd "<leader> b t") 'my/bookmark-tag-current-file)
 
-(evil-ex-define-cmd "slick" 'my/speed-dial-tactical-mode)
-(evil-ex-define-cmd "operational" 'my/speed-dial-operational-mode)
+(evil-ex-define-cmd "command" 'my/speed-dial-tactical-mode)
+(evil-ex-define-cmd "menu" 'my/speed-dial-operational-mode)
 
 (defun my/jump-to-inline-mark (char)
   (interactive "c")

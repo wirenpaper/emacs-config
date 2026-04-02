@@ -364,6 +364,34 @@
             (local-set-key (kbd "C-l") 'my/eshell-clear-buffer)))
 
 ;; ==========================================
+;; The Ultimate Zsh-like Completion Fix for Eshell + Corfu
+;; ==========================================
+(with-eval-after-load 'pcomplete
+  (defun my/pcomplete-capf-fix-dir-space (orig-fn &rest args)
+    "Ensure that `pcomplete' does not append a space after a directory."
+    (let ((res (apply orig-fn args)))
+      ;; Check if pcomplete returned a valid completion list
+      (when (and res (listp res))
+        (let ((exit-fn (plist-get (nthcdr 3 res) :exit-function)))
+          (when exit-fn
+            ;; Override the exit function
+            (plist-put (nthcdr 3 res) :exit-function
+                       (lambda (str status)
+                         ;; If the string ends in a slash, it's a directory! Bind the 
+                         ;; termination string to "" (no space). Otherwise, let it be a space.
+                         (let ((pcomplete-termination-string
+                                (if (and (stringp str) (string-suffix-p "/" str))
+                                    ""
+                                  (if (boundp 'pcomplete-termination-string)
+                                      pcomplete-termination-string
+                                    " "))))
+                           (funcall exit-fn str status)))))))
+      res))
+  
+  ;; Apply the wrapper to Eshell's completion engine
+  (advice-add 'pcomplete-completions-at-point :around #'my/pcomplete-capf-fix-dir-space))
+
+;; ==========================================
 ;; 7. Setup Standard Bookmarks
 ;; ==========================================
 
@@ -578,6 +606,7 @@ Displays the calculated breadcrumb path in the echo area."
   (corfu-auto-prefix 2)
   (corfu-cycle t)
   (corfu-quit-no-match t)
+  (corfu-preselect 'prompt) ;; <-- FIX: Keeps the prompt selected so TAB completes the prefix!
   :init
   (global-corfu-mode)
   :config
@@ -586,9 +615,9 @@ Displays the calculated breadcrumb path in the echo area."
   (define-key corfu-map (kbd "RET") nil)
   (define-key corfu-map (kbd "<return>") nil)
 
-  ;; 2. Make TAB accept the selected autocomplete suggestion
-  (define-key corfu-map (kbd "TAB") #'corfu-insert)
-  (define-key corfu-map (kbd "<tab>") #'corfu-insert)
+  ;; 2. Make TAB complete the common prefix and cycle (Zsh style)
+  (define-key corfu-map (kbd "TAB") #'corfu-complete)    ;; <-- FIX: Use complete instead of insert
+  (define-key corfu-map (kbd "<tab>") #'corfu-complete)  ;; <-- FIX: Use complete instead of insert
   ;; -------------------------------------
 
   (with-eval-after-load 'evil
