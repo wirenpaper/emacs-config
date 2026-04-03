@@ -370,6 +370,13 @@
           (lambda ()
             (local-set-key (kbd "C-l") 'my/eshell-clear-buffer)))
 
+;; Bind Alt-j and Alt-k to navigate history in Eshell's insert mode
+(with-eval-after-load 'esh-mode
+  (with-eval-after-load 'evil
+    (evil-define-key 'insert eshell-mode-map
+      (kbd "M-k") 'eshell-previous-matching-input-from-input
+      (kbd "M-j") 'eshell-next-matching-input-from-input)))
+
 ;; ==========================================
 ;; The Ultimate Zsh-like Completion Fix for Eshell + Corfu
 ;; ==========================================
