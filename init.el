@@ -8,6 +8,8 @@
 ;; 0. Emacs Core & Custom UI Settings
 ;; ==========================================
 
+(server-start)
+
 ;; Always prefer newer source files over stale byte-compiled files
 (setq load-prefer-newer t)
 
@@ -137,15 +139,45 @@
 ;; Typography / Font Settings
 ;; ==========================================
 
-(let ((my-english-font "CMU Typewriter Text")
-      (my-arabic-font  "Scheherazade New"))
+(let* ((my-english-font "CMU Typewriter Text")
+       (my-arabic-font  "Scheherazade New")
+       ;; Dynamically find whatever NixOS decided to name JetBrains or Hack
+       (my-symbol-font  (seq-find (lambda (f) (string-match-p "JetBrains\\|Hack" f)) 
+                                  (font-family-list))))
 
+  ;; 1. Set primary English font
   (when (member my-english-font (font-family-list))
     (set-face-attribute 'default nil :font my-english-font :height 200))
 
+  ;; 2. Set Arabic font and scale it properly
   (when (member my-arabic-font (font-family-list))
     (add-to-list 'face-font-rescale-alist (cons my-arabic-font 1.35))
-    (set-fontset-font t 'arabic (font-spec :family my-arabic-font))))
+    (set-fontset-font t 'arabic (font-spec :family my-arabic-font)))
+
+  ;; 3. THE FIX: Handle Fallback Symbols and Override CMU
+  (when my-symbol-font
+    (let ((sym-font-spec (font-spec :family my-symbol-font)))
+
+      ;; Fallbacks for normal symbols (lines, corners, icons)
+      (set-fontset-font t '(#x2500 . #x25FF) sym-font-spec nil 'prepend)
+      (set-fontset-font t '(#x2600 . #x26FF) sym-font-spec nil 'prepend)
+      (set-fontset-font t '(#xE000 . #xF8FF) sym-font-spec nil 'prepend)
+
+      ;; THE OVAL HIJACK: CMU Typewriter stubbornly claims it has the ○ character.
+      ;; We bypass the font system entirely and force the Emacs Display Engine
+      ;; to draw these 4 Jujutsu graph characters using the Nerd Font face.
+      (make-face 'my-jj-symbol-face)
+      (set-face-attribute 'my-jj-symbol-face nil :family my-symbol-font)
+
+      (unless standard-display-table
+        (setq standard-display-table (make-display-table)))
+
+      (dolist (char '(?○ ?● ?◆ ?◇))
+        (aset standard-display-table char 
+              (vector (make-glyph-code char 'my-jj-symbol-face))))))
+
+  ;; Force Emacs to clear the screen cache and redraw
+  (clear-face-cache t))
 
 ;; ==========================================
 ;; Fix RTL/Arabic Cursor Movement in Evil Mode
