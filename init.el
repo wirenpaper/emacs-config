@@ -145,9 +145,13 @@
        (my-symbol-font  (seq-find (lambda (f) (string-match-p "JetBrains\\|Hack" f)) 
                                   (font-family-list))))
 
-  ;; 1. Set primary English font
+  ;; 1. Set primary English font with a heavier weight
   (when (member my-english-font (font-family-list))
-    (set-face-attribute 'default nil :font my-english-font :height 200))
+    ;; Try :weight 'semi-bold or 'bold if 'medium isn't dark enough
+    (set-face-attribute 'default nil 
+                        :font my-english-font 
+                        :weight 'semi-bold 
+                        :height 200))
 
   ;; 2. Set Arabic font and scale it properly
   (when (member my-arabic-font (font-family-list))
@@ -215,14 +219,67 @@
 ;; Relative Line Numbers
 ;; ==========================================
 
-(setq display-line-numbers-type 'relative)
-(global-display-line-numbers-mode 1)
+;;(setq display-line-numbers-type 'relative)
+;;(global-display-line-numbers-mode 1)
+;;
+;;(dolist (mode '(eshell-mode-hook
+;;                eat-mode-hook
+;;                term-mode-hook
+;;                shell-mode-hook))
+;;  (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
-(dolist (mode '(eshell-mode-hook
-                eat-mode-hook
-                term-mode-hook
-                shell-mode-hook))
-  (add-hook mode (lambda () (display-line-numbers-mode 0))))
+;; ==========================================
+;; Remove bar
+;; ==========================================
+(setq-default mode-line-format nil)
+
+
+;; ==========================================
+;; Calculate Location
+;; ==========================================
+(defvar my-last-ruler-message nil
+  "Store the last position message to prevent overwriting active messages.")
+
+(defun my-show-position-echo ()
+  "Show position in the bottom right of the echo area (Vim ruler style)."
+  ;; 1. Hide the position info if the minibuffer is active (e.g., Evil Ex mode : )
+  (unless (active-minibuffer-window)
+    (let* ((raw-line (line-number-at-pos))
+           (raw-total (line-number-at-pos (point-max)))
+           (total-lines (if (and (> raw-total 1) 
+                                 (eq ?\n (char-before (point-max))))
+                            (- raw-total 1)
+                          raw-total))
+           (line (min raw-line total-lines))
+           ;; Prevent division by zero on empty buffers
+           (pct (if (> total-lines 0) (floor (* 100.0 line) total-lines) 0))
+           
+           ;; Create the string you want to display
+           (info-str (format "Line %d of %d --%d%%--" line total-lines pct))
+           
+           ;; Get the current message and the width of the screen
+           (msg (current-message))
+           (width (window-width (minibuffer-window))))
+      
+      ;; 2. If the current message in the echo area is just our previous position info, 
+      ;; we treat the echo area as empty.
+      (when (equal msg my-last-ruler-message)
+        (setq msg nil))
+        
+      (let* ((msg-len (if msg (string-width msg) 0))
+             ;; Calculate spaces needed to push our string to the far right
+             (padding (- width (string-width info-str) msg-len 1)))
+        
+        ;; 3. Only print if there's enough space on the screen
+        (when (>= padding 0)
+          ;; Bind message-log-max to nil so we don't spam your *Messages* buffer
+          (let ((message-log-max nil)) 
+            (setq my-last-ruler-message 
+                  (concat (or msg "") (make-string padding ?\s) info-str))
+            (message "%s" my-last-ruler-message)))))))
+
+;; Attach the function to run automatically after every command/movement
+(add-hook 'post-command-hook #'my-show-position-echo)
 
 ;; ==========================================
 ;; Reload / Compile Config Functions
