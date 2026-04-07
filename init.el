@@ -241,44 +241,36 @@
   "Store the last position message to prevent overwriting active messages.")
 
 (defun my-show-position-echo ()
-  "Show position in the bottom right of the echo area (Vim ruler style)."
-  ;; 1. Hide the position info if the minibuffer is active (e.g., Evil Ex mode : )
+  "Show position in the bottom right, yielding to other messages for performance."
   (unless (active-minibuffer-window)
-    (let* ((raw-line (line-number-at-pos))
-           (raw-total (line-number-at-pos (point-max)))
-           (total-lines (if (and (> raw-total 1) 
-                                 (eq ?\n (char-before (point-max))))
-                            (- raw-total 1)
-                          raw-total))
-           (line (min raw-line total-lines))
-           ;; Prevent division by zero on empty buffers
-           (pct (if (> total-lines 0) (floor (* 100.0 line) total-lines) 0))
-           
-           ;; Create the string you want to display
-           (info-str (format "Line %d of %d --%d%%--" line total-lines pct))
-           
-           ;; Get the current message and the width of the screen
-           (msg (current-message))
-           (width (window-width (minibuffer-window))))
+    (let ((msg (current-message)))
       
-      ;; 2. If the current message in the echo area is just our previous position info, 
-      ;; we treat the echo area as empty.
-      (when (equal msg my-last-ruler-message)
-        (setq msg nil))
+      ;; FAST PATH: Only do the heavy math if the echo area is empty 
+      ;; OR if it's currently displaying our own ruler.
+      (when (or (not msg) 
+                (equal msg my-last-ruler-message))
         
-      (let* ((msg-len (if msg (string-width msg) 0))
-             ;; Calculate spaces needed to push our string to the far right
-             (padding (- width (string-width info-str) msg-len 1)))
-        
-        ;; 3. Only print if there's enough space on the screen
-        (when (>= padding 0)
-          ;; Bind message-log-max to nil so we don't spam your *Messages* buffer
-          (let ((message-log-max nil)) 
-            (setq my-last-ruler-message 
-                  (concat (or msg "") (make-string padding ?\s) info-str))
-            (message "%s" my-last-ruler-message)))))))
+        (let* ((raw-line (line-number-at-pos))
+               (raw-total (line-number-at-pos (point-max)))
+               (total-lines (if (and (> raw-total 1) 
+                                     (eq ?\n (char-before (point-max))))
+                                (- raw-total 1)
+                              raw-total))
+               (line (min raw-line total-lines))
+               (pct (if (> total-lines 0) (floor (* 100.0 line) total-lines) 0))
+               
+               (info-str (format "Line %d of %d --%d%%--" line total-lines pct))
+               (width (window-width (minibuffer-window)))
+               (padding (- width (string-width info-str) 1)))
+          
+          (when (>= padding 0)
+            (let ((message-log-max nil)) 
+              (setq my-last-ruler-message (concat (make-string padding ?\s) info-str))
+              (message "%s" my-last-ruler-message))))))))
 
-;; Attach the function to run automatically after every command/movement
+;; Make sure you still have your defvar defined above this!
+;; (defvar my-last-ruler-message nil "Store the last position message.")
+
 (add-hook 'post-command-hook #'my-show-position-echo)
 
 ;; ==========================================
