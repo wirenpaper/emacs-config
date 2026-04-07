@@ -1164,3 +1164,26 @@ Displays the calculated breadcrumb path in the echo area."
 
 ;; 3. Bulletproof: Re-apply the stripping immediately after any theme is loaded or toggled
 (advice-add 'load-theme :after #'mystrip-syntax-colors)
+
+;; =========================================
+;; Avy: Jump to any place on the screen
+;; =========================================
+(use-package avy
+  :ensure t
+  :custom
+  ;; How long it waits after your last keystroke before showing jump labels
+  ;; 0.3 is usually the sweet spot for fast typists.
+  (avy-timeout-seconds 0.1)
+  
+  ;; The keys used for the jump overlays (home row for speed)
+  (avy-keys '(?a ?s ?d ?f ?j ?k ?l ?\;))
+  
+  :config
+  (with-eval-after-load 'evil
+    ;; Bind 'g s' in normal/motion states to trigger the jump
+    (define-key evil-motion-state-map (kbd "g k") #'evil-avy-goto-char-timer)
+    
+    ;; Alternatively, since you use Space as your leader key, 
+    ;; uncomment this if you prefer a leader binding like "SPC j":
+    ;; (evil-define-key '(normal motion) 'global (kbd "<leader> j") #'evil-avy-goto-char-timer)
+    ))
