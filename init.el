@@ -719,40 +719,40 @@ Displays the calculated breadcrumb path in the echo area."
     (define-key corfu-map (kbd "C-j") 'corfu-next)
     (define-key corfu-map (kbd "C-k") 'corfu-previous)))
 
-;; 2. Setup Eglot (The built-in LSP client)
-(use-package eglot
-  :ensure nil
-  :hook ((c-mode . eglot-ensure)
-         (c++-mode . eglot-ensure))
-  :custom
-  ;; Ignore BOTH auto-formatting on type and inlay hints
-  (eglot-ignored-server-capabilities '(:documentOnTypeFormattingProvider
-                                       :inlayHintProvider))
-  :config
-  ;; Tell Eglot to completely ignore Flymake (turns off annoying linting)
-  (add-to-list 'eglot-stay-out-of 'flymake)
+  ;; 2. Setup Eglot (The built-in LSP client)
+  (use-package eglot
+    :ensure nil
+    :hook
+    ((c-mode . eglot-ensure)
+     (c++-mode . eglot-ensure)
+     ;; FIX: Prevent Eldoc from stacking hover documentation with function signatures
+     (eglot-managed-mode . (lambda () (setq-local eldoc-documentation-strategy #'eldoc-documentation-default))))
+    :custom
+    ;; Ignore BOTH auto-formatting on type and inlay hints
+    (eglot-ignored-server-capabilities '(:documentOnTypeFormattingProvider :inlayHintProvider))
+    :config
+    ;; Tell Eglot to completely ignore Flymake (turns off annoying linting)
+    (add-to-list 'eglot-stay-out-of 'flymake)
 
-  (setq eglot-events-buffer-config '(:size 0 :format short)) 
-  
-  (with-eval-after-load 'jsonrpc
-    (fset #'jsonrpc--log-event #'ignore))
+    (setq eglot-events-buffer-config '(:size 0 :format short))
+    (with-eval-after-load 'jsonrpc
+      (fset #'jsonrpc--log-event #'ignore))
 
-  ;; CRITICAL: Tell Clangd to enable C++ modules AND inject our Linux formatting rules directly!
-  (add-to-list 'eglot-server-programs
-               '((c++-mode c-mode)
-                 "clangd"
-                 "--experimental-modules-support"
-                 "--fallback-style={BasedOnStyle: LLVM, IndentWidth: 8, TabWidth: 8, UseTab: Always, BreakBeforeBraces: Linux, IndentCaseLabels: false, BinPackArguments: false, BinPackParameters: false}"))
-  
-  (with-eval-after-load 'evil
-    (evil-define-key 'normal eglot-mode-map
-      (kbd "<leader> c r") 'eglot-rename
-      (kbd "<leader> c a") 'eglot-code-actions
-      (kbd "<leader> c f") 'eglot-format-buffer
-      (kbd "g d") 'xref-find-definitions
-      (kbd "g D") 'xref-find-references
-      (kbd "K")   'eldoc)))
+    ;; CRITICAL: Tell Clangd to enable C++ modules AND inject our Linux formatting rules directly!
+    (add-to-list 'eglot-server-programs
+                 '((c++-mode c-mode)
+                   . ("clangd"
+                      "--experimental-modules-support"
+                      "--fallback-style=BasedOnStyle: LLVM, IndentWidth: 8, TabWidth: 8, UseTab: Always, BreakBeforeBraces: Linux, IndentCaseLabels: false, BinPackArguments: false, BinPackParameters: false")))
 
+    (with-eval-after-load 'evil
+      (evil-define-key 'normal eglot-mode-map
+        (kbd "<leader> c r") 'eglot-rename
+        (kbd "<leader> c a") 'eglot-code-actions
+        (kbd "<leader> c f") 'eglot-format-buffer
+        (kbd "g d") 'xref-find-definitions
+        (kbd "g D") 'xref-find-references
+        (kbd "K") 'eldoc)))
 
 ;; ==========================================
 ;; C/C++ Indentation & Formatting (Linux Style)
@@ -1187,3 +1187,11 @@ Displays the calculated breadcrumb path in the echo area."
     ;; uncomment this if you prefer a leader binding like "SPC j":
     ;; (evil-define-key '(normal motion) 'global (kbd "<leader> j") #'evil-avy-goto-char-timer)
     ))
+
+;; =========================================
+;; make copy pasting xclip compliant
+;; =========================================
+(use-package xclip
+  :ensure t
+  :config
+  (xclip-mode 1))
