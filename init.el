@@ -1215,13 +1215,11 @@ This targets the exact rendering artifact and masks it."
       (setq my-camouflage-overlay (make-overlay 1 1))
       (overlay-put my-camouflage-overlay 'priority 9999))
 
-    ;; DYNAMIC THEME UPDATE: Always pull the current colors right now
-    (let ((bg-color (or (face-background 'default) "black"))
-          (fg-color (or (face-foreground 'shadow) 
-                        (face-foreground 'font-lock-comment-face)
-                        "gray50")))
-      ;; Update the overlay's paint job every time so it survives theme changes
-      (overlay-put my-camouflage-overlay 'face `(:foreground ,fg-color :background ,bg-color)))
+    ;; DYNAMIC THEME UPDATE: Always pull the current background color
+    (let ((bg-color (or (face-background 'default) "black")))
+      ;; Paint BOTH the text and the background with the theme's background color
+      ;; This makes the chopped line completely invisible, surviving theme changes
+      (overlay-put my-camouflage-overlay 'face `(:foreground ,bg-color :background ,bg-color)))
 
     ;; THE EXACT LOGIC FROM YOUR SUCCESSFUL MANUAL TEST
     (save-excursion
