@@ -486,6 +486,15 @@
   ;; Apply the wrapper to Eshell's completion engine
   (advice-add 'pcomplete-completions-at-point :around #'my/pcomplete-capf-fix-dir-space))
 
+;; ---------------------------------------------------
+;; Make Corfu popups work in Terminal (emacs -nw)
+;; ---------------------------------------------------
+(use-package corfu-terminal
+  ;; Only load this if we are running in a terminal
+  :unless (display-graphic-p)
+  :config
+  (corfu-terminal-mode +1))
+
 ;; ==========================================
 ;; 7. Setup Standard Bookmarks
 ;; ==========================================
