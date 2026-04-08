@@ -1197,38 +1197,45 @@ Displays the calculated breadcrumb path in the echo area."
   (xclip-mode 1))
 
 ;; ==========================================
-;; The "L" Programmatic Camouflage (v3)
+;; The "L" Programmatic Camouflage
 ;; ==========================================
 
-(defvar my-red-overlay nil)
+(defvar my-camouflage-overlay nil)
 
-(defun make-line-below-l-red ()
-  "Diagnostic: Paints the line immediately below where 'L' lands."
+(defun camouflage-chopped-line-below-l ()
+  "Diagnostic: Paints the chopped line the exact color of the background."
   (interactive)
   ;; Clean up the old overlay if it exists
-  (when (overlayp my-red-overlay)
-    (delete-overlay my-red-overlay))
+  (when (overlayp my-camouflage-overlay)
+    (delete-overlay my-camouflage-overlay))
   
-  ;; Create a new high-priority red overlay
-  (setq my-red-overlay (make-overlay 1 1))
-  (overlay-put my-red-overlay 'face '(:foreground "white" :background "red" :weight bold))
-  (overlay-put my-red-overlay 'priority 9999)
+  ;; Create a new high-priority overlay
+  (setq my-camouflage-overlay (make-overlay 1 1))
+  
+  ;; Get the current default background color of the editor
+  (let ((bg-color (face-background 'default)))
+    ;; Set both foreground (text) and background to the editor's background color
+    (overlay-put my-camouflage-overlay 'face `(:foreground ,bg-color :background ,bg-color))
+    (overlay-put my-camouflage-overlay 'priority 9999))
 
   (save-excursion
-    ;; 1. Move to the last *fully visible* line (this is Emacs' internal equivalent to L)
+    ;; 1. Go to Emacs' standard "L" target (last fully visible line)
     (move-to-window-line -1)
     
-    ;; 2. Force a move DOWN one visual line (into the chopped territory)
+    ;; 2. Step down into the chopped zone
     (vertical-motion 1)
     
     (let ((start-pos (point)))
       ;; 3. Move to the end of this visual line
       (end-of-visual-line)
+      ;; Grab the newline character too so the entire strip is painted over
+      (unless (eobp) 
+        (forward-char 1))
       
-      ;; 4. Paint it red
-      (move-overlay my-red-overlay start-pos (point))))
+      ;; 4. Apply the camouflage
+      (move-overlay my-camouflage-overlay start-pos (point))))
   
-  (message "Diagnostic: Line below L is now red!"))
+  (message "Diagnostic: Chopped line camouflaged!"))
 
-;; Still bound to Ctrl-c r for quick testing
-(global-set-key (kbd "C-c r") 'make-line-below-l-red)
+;; Bind to Ctrl-c r for quick testing
+(global-set-key (kbd "C-c r") 'camouflage-chopped-line-below-l)
