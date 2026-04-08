@@ -1200,40 +1200,52 @@ Displays the calculated breadcrumb path in the echo area."
 ;; The "L" Programmatic Camouflage
 ;; ==========================================
 
-;; 1. Use defvar-local so the overlay doesn't jump between different files/windows
+;; 1. Variables to hold the overlay and the micro-timer locally per buffer
 (defvar-local my-camouflage-overlay nil)
+(defvar-local my-camouflage-timer nil)
 
-(defun auto-camouflage-chopped-line (&rest _args)
-  "Silently applies the camouflage logic after commands or scrolling."
+;; 2. The core logic that finds and paints the chopped line
+(defun apply-camouflage-logic ()
+  "Silently applies the camouflage logic to the chopped line at the bottom."
   ;; Safety check: only run in normal buffers (skip minibuffer or dead windows)
   (when (and (not (minibufferp)) (window-live-p (selected-window)))
     
-    ;; 2. Initialize the overlay exactly once per buffer
+    ;; Initialize the overlay exactly once per buffer
     (unless (overlayp my-camouflage-overlay)
       (setq my-camouflage-overlay (make-overlay 1 1))
       (let ((bg-color (or (face-background 'default) "black")))
+        ;; Foreground gray for testing, background matches your theme
         (overlay-put my-camouflage-overlay 'face `(:foreground "gray" :background ,bg-color))
         (overlay-put my-camouflage-overlay 'priority 9999)))
 
-    ;; 3. THE EXACT LOGIC FROM YOUR SUCCESSFUL MANUAL TEST
+    ;; THE EXACT LOGIC FROM YOUR SUCCESSFUL MANUAL TEST
     (save-excursion
       (move-to-window-line -1)
       
-      ;; The only added condition: we check if vertical-motion *actually* moved down.
-      ;; If we are at the absolute bottom of the file, it returns 0, and we move the overlay away
-      ;; so we don't accidentally hide the real last line of your code.
+      ;; Check if vertical-motion actually moved down.
+      ;; If we are at the absolute bottom of the file, it returns 0, and we move the overlay away.
       (if (= (vertical-motion 1) 1)
           (let ((start-pos (point)))
             (end-of-visual-line)
             (unless (eobp) 
               (forward-char 1))
             
-            ;; Apply the camouflage just like C-c r did
+            ;; Apply the camouflage
             (move-overlay my-camouflage-overlay start-pos (point)))
         
         ;; If at the end of the file, hide the overlay out of the way
         (move-overlay my-camouflage-overlay 1 1)))))
 
-;; 4. Attach to the two main Emacs lifecycle events that move the screen
-(add-hook 'post-command-hook #'auto-camouflage-chopped-line)
-(add-hook 'window-scroll-functions #'auto-camouflage-chopped-line)
+;; 3. The deferred trigger that waits for Emacs to finish drawing the screen
+(defun trigger-camouflage-deferred (&rest _args)
+  "Triggers the camouflage logic after a microscopic delay to let the screen settle."
+  ;; Cancel any pending timer so we don't queue up hundreds while scrolling fast
+  (when my-camouflage-timer
+    (cancel-timer my-camouflage-timer))
+  ;; Wait 0.01 seconds before calculating where the bottom of the window actually is
+  (setq my-camouflage-timer 
+        (run-with-idle-timer 0.01 nil #'apply-camouflage-logic)))
+
+;; 4. Attach the deferred trigger to the two main Emacs lifecycle events
+(add-hook 'post-command-hook #'trigger-camouflage-deferred)
+(add-hook 'window-scroll-functions #'trigger-camouflage-deferred)
