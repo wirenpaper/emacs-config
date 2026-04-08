@@ -713,18 +713,21 @@ Displays the calculated breadcrumb path in the echo area."
   :init
   (global-corfu-mode)
   :config
-  ;; Clear unwanted defaults
-  (define-key corfu-map (kbd "RET") nil)
-  (define-key corfu-map (kbd "<return>") nil)
+  ;; Clear default TAB behavior so it doesn't interfere
   (define-key corfu-map (kbd "TAB") nil)
   (define-key corfu-map (kbd "<tab>") nil)
 
-  ;; Cycle down with C-i and up with C-o
-  (define-key corfu-map (kbd "C-i") #'corfu-next)
-  (define-key corfu-map (kbd "C-o") #'corfu-previous)
+  ;; Cycle DOWN (forward) with C-j
+  (define-key corfu-map (kbd "C-j") #'corfu-next)
 
-  ;; Select and insert the currently highlighted option with C-j
-  (define-key corfu-map (kbd "C-j") #'corfu-insert)
+  ;; Cycle UP (backwards) with C-k
+  (define-key corfu-map (kbd "C-k") #'corfu-previous)
+
+  ;; Select and insert the currently highlighted option with C-m
+  ;; (In terminals, C-m and Enter are the same physical signal, so we bind all variants)
+  (define-key corfu-map (kbd "C-m") #'corfu-insert)
+  (define-key corfu-map (kbd "RET") #'corfu-insert)
+  (define-key corfu-map (kbd "<return>") #'corfu-insert)
 
   ;; Cancel popup with C-[ or Escape without changing anything
   (define-key corfu-map (kbd "C-[") #'corfu-quit)
