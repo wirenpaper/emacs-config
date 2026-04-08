@@ -1206,7 +1206,8 @@ Displays the calculated breadcrumb path in the echo area."
 
 ;; 2. The core logic that finds and paints the chopped line
 (defun apply-camouflage-logic ()
-  "Silently applies the camouflage logic to the chopped line at the bottom."
+  "Silently applies the camouflage logic to the chopped line at the bottom.
+This targets the exact rendering artifact and masks it."
   ;; Safety check: only run in normal buffers (skip minibuffer or dead windows)
   (when (and (not (minibufferp)) (window-live-p (selected-window)))
     
@@ -1223,7 +1224,7 @@ Displays the calculated breadcrumb path in the echo area."
       (move-to-window-line -1)
       
       ;; Check if vertical-motion actually moved down.
-      ;; If we are at the absolute bottom of the file, it returns 0, and we move the overlay away.
+      ;; If we are at the absolute bottom of the file, it returns 0.
       (if (= (vertical-motion 1) 1)
           (let ((start-pos (point)))
             (end-of-visual-line)
@@ -1238,7 +1239,8 @@ Displays the calculated breadcrumb path in the echo area."
 
 ;; 3. The deferred trigger that waits for Emacs to finish drawing the screen
 (defun trigger-camouflage-deferred (&rest _args)
-  "Triggers the camouflage logic after a microscopic delay to let the screen settle."
+  "Triggers the camouflage logic after a microscopic delay.
+This gives the screen time to settle before painting the line."
   ;; Cancel any pending timer so we don't queue up hundreds while scrolling fast
   (when my-camouflage-timer
     (cancel-timer my-camouflage-timer))
