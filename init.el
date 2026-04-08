@@ -531,8 +531,40 @@
       ;; Ultimate fallback just in case the file gets deleted somehow
       (load-theme 'ef-orange t)))
 
+  ;; 1. Define custom completion specifically for ef-themes
+  (evil-ex-define-argument-type ef-theme-name
+    "Completion for ef-themes."
+    :collection (lambda (string predicate action)
+                  (let ((themes (mapcan (lambda (sym)
+                                          (let ((name (symbol-name sym)))
+                                            (if (string-prefix-p "ef-" name)
+                                                (list name))))
+                                        (custom-available-themes))))
+                    (complete-with-action action themes string predicate))))
+
+  ;; 2. Properly define the Evil command
+  (evil-define-command evil-ef-theme-select (theme)
+    "Select an ef-theme with Evil Ex command."
+    (interactive "<a>")
+    (let ((clean-theme (when theme (string-trim theme))))
+      (if (and clean-theme (not (string-empty-p clean-theme)))
+          (progn
+            ;; Disable current themes to prevent color bleeding
+            (mapc #'disable-theme custom-enabled-themes)
+            ;; Load the requested theme cleanly
+            (load-theme (intern clean-theme) t))
+        ;; Fallback: if you just type `:colo` and hit Enter
+        (call-interactively 'ef-themes-select))))
+
+  ;; 3. Tell Evil Ex to use our custom completion list for this command
+  (evil-set-command-property 'evil-ef-theme-select :ex-arg 'ef-theme-name)
+
+  ;; 4. Bind the command to Vim's standard :colo and :colorscheme
+  (evil-ex-define-cmd "colo" 'evil-ef-theme-select)
+  (evil-ex-define-cmd "colorscheme" 'evil-ef-theme-select)
+
+  ;; 5. Toggle keybind
   (evil-define-key 'normal 'global
-    (kbd "<leader> t s") 'ef-themes-select
     (kbd "<leader> t t") 'ef-themes-toggle))
 
 ;; ==========================================
