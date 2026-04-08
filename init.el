@@ -705,63 +705,69 @@ Displays the calculated breadcrumb path in the echo area."
 ;; 1. Setup Corfu for modern, lightweight auto-completion popups
 (use-package corfu
   :custom
-  (corfu-auto t)
-  (corfu-auto-delay 0.1)
-  (corfu-auto-prefix 2)
-  (corfu-cycle t)
+  (corfu-auto nil)              ;; NO automatic popup while typing
+  (corfu-cycle t)               ;; Allow cycling from bottom back to top
   (corfu-quit-no-match t)
-  (corfu-preselect 'prompt) ;; <-- FIX: Keeps the prompt selected so TAB completes the prefix!
+  (corfu-preselect 'first)      ;; Always highlight the first option automatically
+  (corfu-preview-current nil)   ;; DO NOT inject or change text while cycling
   :init
   (global-corfu-mode)
   :config
-  ;; ---------- THE FIX IS HERE ----------
-  ;; 1. Stop Corfu from stealing the Enter key
+  ;; Clear unwanted defaults
   (define-key corfu-map (kbd "RET") nil)
   (define-key corfu-map (kbd "<return>") nil)
+  (define-key corfu-map (kbd "TAB") nil)
+  (define-key corfu-map (kbd "<tab>") nil)
 
-  ;; 2. Make TAB complete the common prefix and cycle (Zsh style)
-  (define-key corfu-map (kbd "TAB") #'corfu-complete)    ;; <-- FIX: Use complete instead of insert
-  (define-key corfu-map (kbd "<tab>") #'corfu-complete)  ;; <-- FIX: Use complete instead of insert
-  ;; -------------------------------------
+  ;; Cycle down with C-i and up with C-o
+  (define-key corfu-map (kbd "C-i") #'corfu-next)
+  (define-key corfu-map (kbd "C-o") #'corfu-previous)
+
+  ;; Select and insert the currently highlighted option with C-j
+  (define-key corfu-map (kbd "C-j") #'corfu-insert)
+
+  ;; Cancel popup with C-[ or Escape without changing anything
+  (define-key corfu-map (kbd "C-[") #'corfu-quit)
+  (define-key corfu-map (kbd "<escape>") #'corfu-quit)
+
+  ;; Trigger manual completion with C-n in Evil Insert Mode
+  (with-eval-after-load 'evil
+    (define-key evil-insert-state-map (kbd "C-n") #'completion-at-point)))
+
+;; 2. Setup Eglot (The built-in LSP client)
+(use-package eglot
+  :ensure nil
+  :hook
+  ((c-mode . eglot-ensure)
+   (c++-mode . eglot-ensure)
+   ;; FIX: Prevent Eldoc from stacking hover documentation with function signatures
+   (eglot-managed-mode . (lambda () (setq-local eldoc-documentation-strategy #'eldoc-documentation-default))))
+  :custom
+  ;; Ignore BOTH auto-formatting on type and inlay hints
+  (eglot-ignored-server-capabilities '(:documentOnTypeFormattingProvider :inlayHintProvider))
+  :config
+  ;; Tell Eglot to completely ignore Flymake (turns off annoying linting)
+  (add-to-list 'eglot-stay-out-of 'flymake)
+
+  (setq eglot-events-buffer-config '(:size 0 :format short))
+  (with-eval-after-load 'jsonrpc
+    (fset #'jsonrpc--log-event #'ignore))
+
+  ;; CRITICAL: Tell Clangd to enable C++ modules AND inject our Linux formatting rules directly!
+  (add-to-list 'eglot-server-programs
+               '((c++-mode c-mode)
+                 . ("clangd"
+                    "--experimental-modules-support"
+                    "--fallback-style=BasedOnStyle: LLVM, IndentWidth: 8, TabWidth: 8, UseTab: Always, BreakBeforeBraces: Linux, IndentCaseLabels: false, BinPackArguments: false, BinPackParameters: false")))
 
   (with-eval-after-load 'evil
-    (define-key corfu-map (kbd "C-j") 'corfu-next)
-    (define-key corfu-map (kbd "C-k") 'corfu-previous)))
-
-  ;; 2. Setup Eglot (The built-in LSP client)
-  (use-package eglot
-    :ensure nil
-    :hook
-    ((c-mode . eglot-ensure)
-     (c++-mode . eglot-ensure)
-     ;; FIX: Prevent Eldoc from stacking hover documentation with function signatures
-     (eglot-managed-mode . (lambda () (setq-local eldoc-documentation-strategy #'eldoc-documentation-default))))
-    :custom
-    ;; Ignore BOTH auto-formatting on type and inlay hints
-    (eglot-ignored-server-capabilities '(:documentOnTypeFormattingProvider :inlayHintProvider))
-    :config
-    ;; Tell Eglot to completely ignore Flymake (turns off annoying linting)
-    (add-to-list 'eglot-stay-out-of 'flymake)
-
-    (setq eglot-events-buffer-config '(:size 0 :format short))
-    (with-eval-after-load 'jsonrpc
-      (fset #'jsonrpc--log-event #'ignore))
-
-    ;; CRITICAL: Tell Clangd to enable C++ modules AND inject our Linux formatting rules directly!
-    (add-to-list 'eglot-server-programs
-                 '((c++-mode c-mode)
-                   . ("clangd"
-                      "--experimental-modules-support"
-                      "--fallback-style=BasedOnStyle: LLVM, IndentWidth: 8, TabWidth: 8, UseTab: Always, BreakBeforeBraces: Linux, IndentCaseLabels: false, BinPackArguments: false, BinPackParameters: false")))
-
-    (with-eval-after-load 'evil
-      (evil-define-key 'normal eglot-mode-map
-        (kbd "<leader> c r") 'eglot-rename
-        (kbd "<leader> c a") 'eglot-code-actions
-        (kbd "<leader> c f") 'eglot-format-buffer
-        (kbd "g d") 'xref-find-definitions
-        (kbd "g D") 'xref-find-references
-        (kbd "K") 'eldoc)))
+    (evil-define-key 'normal eglot-mode-map
+      (kbd "<leader> c r") 'eglot-rename
+      (kbd "<leader> c a") 'eglot-code-actions
+      (kbd "<leader> c f") 'eglot-format-buffer
+      (kbd "g d") 'xref-find-definitions
+      (kbd "g D") 'xref-find-references
+      (kbd "K") 'eldoc)))
 
 ;; ==========================================
 ;; C/C++ Indentation & Formatting (Linux Style)
