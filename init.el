@@ -713,21 +713,27 @@ Displays the calculated breadcrumb path in the echo area."
   :init
   (global-corfu-mode)
   :config
-  ;; Clear default TAB behavior so it doesn't interfere
-  (define-key corfu-map (kbd "TAB") nil)
-  (define-key corfu-map (kbd "<tab>") nil)
-
-  ;; Cycle DOWN (forward) with C-j
+  ;; ========================================================
+  ;; THE "ENTER CYCLES DOWN" FIX 💀
+  ;; ========================================================
+  ;; Emacs forcefully translates C-j to Enter. So we just make Enter cycle down!
+  ;; Note: Because C-m IS physically Enter in a terminal, it will also cycle down.
+  (define-key corfu-map (kbd "RET") #'corfu-next)
+  (define-key corfu-map (kbd "<return>") #'corfu-next)
   (define-key corfu-map (kbd "C-j") #'corfu-next)
+  (define-key corfu-map (kbd "C-m") #'corfu-next)
 
-  ;; Cycle UP (backwards) with C-k
+  ;; Cycle UP with C-k
   (define-key corfu-map (kbd "C-k") #'corfu-previous)
+  (define-key corfu-map (kbd "<C-k>") #'corfu-previous)
 
-  ;; Select and insert the currently highlighted option with C-m
-  ;; (In terminals, C-m and Enter are the same physical signal, so we bind all variants)
-  (define-key corfu-map (kbd "C-m") #'corfu-insert)
-  (define-key corfu-map (kbd "RET") #'corfu-insert)
-  (define-key corfu-map (kbd "<return>") #'corfu-insert)
+  ;; ========================================================
+  ;; THE NEW ACCEPT KEYS
+  ;; ========================================================
+  ;; Since Enter/C-m now cycles, we use TAB or C-l to accept the completion!
+  (define-key corfu-map (kbd "TAB") #'corfu-insert)
+  (define-key corfu-map (kbd "<tab>") #'corfu-insert)
+  (define-key corfu-map (kbd "C-l") #'corfu-insert)
 
   ;; Cancel popup with C-[ or Escape without changing anything
   (define-key corfu-map (kbd "C-[") #'corfu-quit)
