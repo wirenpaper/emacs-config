@@ -1200,42 +1200,40 @@ Displays the calculated breadcrumb path in the echo area."
 ;; The "L" Programmatic Camouflage
 ;; ==========================================
 
-(defvar my-camouflage-overlay nil)
+;; 1. Use defvar-local so the overlay doesn't jump between different files/windows
+(defvar-local my-camouflage-overlay nil)
 
-(defun camouflage-chopped-line-below-l ()
-  "Diagnostic: Paints the chopped line the exact color of the background."
-  (interactive)
-  ;; Clean up the old overlay if it exists
-  (when (overlayp my-camouflage-overlay)
-    (delete-overlay my-camouflage-overlay))
-  
-  ;; Create a new high-priority overlay
-  (setq my-camouflage-overlay (make-overlay 1 1))
-  
-  ;; Get the current default background color of the editor
-  (let ((bg-color (face-background 'default)))
-    ;; Set both foreground (text) and background to the editor's background color
-    (overlay-put my-camouflage-overlay 'face `(:foreground ,bg-color :background ,bg-color))
-    (overlay-put my-camouflage-overlay 'priority 9999))
+(defun auto-camouflage-chopped-line (&rest _args)
+  "Silently applies the camouflage logic after commands or scrolling."
+  ;; Safety check: only run in normal buffers (skip minibuffer or dead windows)
+  (when (and (not (minibufferp)) (window-live-p (selected-window)))
+    
+    ;; 2. Initialize the overlay exactly once per buffer
+    (unless (overlayp my-camouflage-overlay)
+      (setq my-camouflage-overlay (make-overlay 1 1))
+      (let ((bg-color (or (face-background 'default) "black")))
+        (overlay-put my-camouflage-overlay 'face `(:foreground "gray" :background ,bg-color))
+        (overlay-put my-camouflage-overlay 'priority 9999)))
 
-  (save-excursion
-    ;; 1. Go to Emacs' standard "L" target (last fully visible line)
-    (move-to-window-line -1)
-    
-    ;; 2. Step down into the chopped zone
-    (vertical-motion 1)
-    
-    (let ((start-pos (point)))
-      ;; 3. Move to the end of this visual line
-      (end-of-visual-line)
-      ;; Grab the newline character too so the entire strip is painted over
-      (unless (eobp) 
-        (forward-char 1))
+    ;; 3. THE EXACT LOGIC FROM YOUR SUCCESSFUL MANUAL TEST
+    (save-excursion
+      (move-to-window-line -1)
       
-      ;; 4. Apply the camouflage
-      (move-overlay my-camouflage-overlay start-pos (point))))
-  
-  (message "Diagnostic: Chopped line camouflaged!"))
+      ;; The only added condition: we check if vertical-motion *actually* moved down.
+      ;; If we are at the absolute bottom of the file, it returns 0, and we move the overlay away
+      ;; so we don't accidentally hide the real last line of your code.
+      (if (= (vertical-motion 1) 1)
+          (let ((start-pos (point)))
+            (end-of-visual-line)
+            (unless (eobp) 
+              (forward-char 1))
+            
+            ;; Apply the camouflage just like C-c r did
+            (move-overlay my-camouflage-overlay start-pos (point)))
+        
+        ;; If at the end of the file, hide the overlay out of the way
+        (move-overlay my-camouflage-overlay 1 1)))))
 
-;; Bind to Ctrl-c r for quick testing
-(global-set-key (kbd "C-c r") 'camouflage-chopped-line-below-l)
+;; 4. Attach to the two main Emacs lifecycle events that move the screen
+(add-hook 'post-command-hook #'auto-camouflage-chopped-line)
+(add-hook 'window-scroll-functions #'auto-camouflage-chopped-line)
