@@ -858,6 +858,28 @@ Displays the calculated breadcrumb path in the echo area."
 (add-hook 'post-command-hook #'my/evil-rescue-from-eof-void)
 
 ;; ==========================================
+;; Rescue Visual State from the EOF void
+;; ==========================================
+
+(defun my/evil-visual-rescue-from-eof-void ()
+  "Prevent visual selection from dragging into the empty EOF newline."
+  (when (and (evil-visual-state-p)
+             (eobp)            ;; We are at the absolute end of the buffer
+             (bolp)            ;; We are at the beginning of a line
+             (not (bobp)))     ;; We aren't in an entirely empty file
+    
+    ;; We stepped into the void newline during a visual selection.
+    ;; 1. Step backward one character to get back onto the last real line
+    (backward-char 1)
+    
+    ;; 2. Tell Evil to update the visual selection region to end here,
+    ;; preventing the highlight from spilling into the void.
+    (evil-visual-refresh)))
+
+;; Attach it to the global command hook so it checks after every movement
+(add-hook 'post-command-hook #'my/evil-visual-rescue-from-eof-void)
+
+;; ==========================================
 ;; Close PDF Outline windows with ESC / C-[
 ;; ==========================================
 
