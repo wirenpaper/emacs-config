@@ -1252,3 +1252,33 @@ This gives the screen time to settle before painting the line."
 ;; 4. Attach the deferred trigger to the two main Emacs lifecycle events
 (add-hook 'post-command-hook #'trigger-camouflage-deferred)
 (add-hook 'window-scroll-functions #'trigger-camouflage-deferred)
+
+;; ==========================================
+;; Avy <-> Camouflage Compatibility Patch
+;; ==========================================
+
+(require 'cl-lib)
+
+(defun my/avy-filter-camouflage-candidates (orig-fn candidates &rest args)
+  "Intercepts Avy to remove jump targets
+   that land inside the camouflaged chopped line."
+  (let ((filtered-cands
+         (cl-remove-if
+          (lambda (cand)
+            ;; Avy candidates look like (POS . WINDOW) or ((START . END) . WINDOW)
+            (let* ((pos (if (consp (car cand)) (caar cand) (car cand)))
+                   (win (cdr cand))
+                   (buf (window-buffer win)))
+              (with-current-buffer buf
+                ;; If the candidate's position is inside the camouflage overlay, filter it out!
+                (and (bound-and-true-p my-camouflage-overlay)
+                     (overlayp my-camouflage-overlay)
+                     (> (overlay-start my-camouflage-overlay) 1)
+                     (>= pos (overlay-start my-camouflage-overlay))))))
+          candidates)))
+    ;; Pass the cleaned-up list back to Avy
+    (apply orig-fn filtered-cands args)))
+
+;; Apply the patch to Avy's core rendering engine
+(with-eval-after-load 'avy
+  (advice-add 'avy-process :around #'my/avy-filter-camouflage-candidates))
