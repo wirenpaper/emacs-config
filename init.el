@@ -1197,7 +1197,7 @@ Displays the calculated breadcrumb path in the echo area."
   (xclip-mode 1))
 
 ;; ==========================================
-;; The "L" Programmatic Camouflage
+;; The "L" Programmatic Camouflage (Theme-Aware)
 ;; ==========================================
 
 ;; 1. Variables to hold the overlay and the micro-timer locally per buffer
@@ -1208,23 +1208,26 @@ Displays the calculated breadcrumb path in the echo area."
 (defun apply-camouflage-logic ()
   "Silently applies the camouflage logic to the chopped line at the bottom.
 This targets the exact rendering artifact and masks it."
-  ;; Safety check: only run in normal buffers (skip minibuffer or dead windows)
   (when (and (not (minibufferp)) (window-live-p (selected-window)))
     
-    ;; Initialize the overlay exactly once per buffer
+    ;; Make sure the overlay exists
     (unless (overlayp my-camouflage-overlay)
       (setq my-camouflage-overlay (make-overlay 1 1))
-      (let ((bg-color (or (face-background 'default) "black")))
-        ;; Foreground gray for testing, background matches your theme
-        (overlay-put my-camouflage-overlay 'face `(:foreground "gray" :background ,bg-color))
-        (overlay-put my-camouflage-overlay 'priority 9999)))
+      (overlay-put my-camouflage-overlay 'priority 9999))
+
+    ;; DYNAMIC THEME UPDATE: Always pull the current colors right now
+    (let ((bg-color (or (face-background 'default) "black"))
+          (fg-color (or (face-foreground 'shadow) 
+                        (face-foreground 'font-lock-comment-face)
+                        "gray50")))
+      ;; Update the overlay's paint job every time so it survives theme changes
+      (overlay-put my-camouflage-overlay 'face `(:foreground ,fg-color :background ,bg-color)))
 
     ;; THE EXACT LOGIC FROM YOUR SUCCESSFUL MANUAL TEST
     (save-excursion
       (move-to-window-line -1)
       
-      ;; Check if vertical-motion actually moved down.
-      ;; If we are at the absolute bottom of the file, it returns 0.
+      ;; Check if vertical-motion actually moved down
       (if (= (vertical-motion 1) 1)
           (let ((start-pos (point)))
             (end-of-visual-line)
@@ -1234,17 +1237,15 @@ This targets the exact rendering artifact and masks it."
             ;; Apply the camouflage
             (move-overlay my-camouflage-overlay start-pos (point)))
         
-        ;; If at the end of the file, hide the overlay out of the way
+        ;; Hide the overlay out of the way if at the end of the file
         (move-overlay my-camouflage-overlay 1 1)))))
 
 ;; 3. The deferred trigger that waits for Emacs to finish drawing the screen
 (defun trigger-camouflage-deferred (&rest _args)
   "Triggers the camouflage logic after a microscopic delay.
 This gives the screen time to settle before painting the line."
-  ;; Cancel any pending timer so we don't queue up hundreds while scrolling fast
   (when my-camouflage-timer
     (cancel-timer my-camouflage-timer))
-  ;; Wait 0.01 seconds before calculating where the bottom of the window actually is
   (setq my-camouflage-timer 
         (run-with-idle-timer 0.01 nil #'apply-camouflage-logic)))
 
