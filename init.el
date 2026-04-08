@@ -1195,3 +1195,40 @@ Displays the calculated breadcrumb path in the echo area."
   :ensure t
   :config
   (xclip-mode 1))
+
+;; ==========================================
+;; The "L" Programmatic Camouflage (v3)
+;; ==========================================
+
+(defvar my-red-overlay nil)
+
+(defun make-line-below-l-red ()
+  "Diagnostic: Paints the line immediately below where 'L' lands."
+  (interactive)
+  ;; Clean up the old overlay if it exists
+  (when (overlayp my-red-overlay)
+    (delete-overlay my-red-overlay))
+  
+  ;; Create a new high-priority red overlay
+  (setq my-red-overlay (make-overlay 1 1))
+  (overlay-put my-red-overlay 'face '(:foreground "white" :background "red" :weight bold))
+  (overlay-put my-red-overlay 'priority 9999)
+
+  (save-excursion
+    ;; 1. Move to the last *fully visible* line (this is Emacs' internal equivalent to L)
+    (move-to-window-line -1)
+    
+    ;; 2. Force a move DOWN one visual line (into the chopped territory)
+    (vertical-motion 1)
+    
+    (let ((start-pos (point)))
+      ;; 3. Move to the end of this visual line
+      (end-of-visual-line)
+      
+      ;; 4. Paint it red
+      (move-overlay my-red-overlay start-pos (point))))
+  
+  (message "Diagnostic: Line below L is now red!"))
+
+;; Still bound to Ctrl-c r for quick testing
+(global-set-key (kbd "C-c r") 'make-line-below-l-red)
