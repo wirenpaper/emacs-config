@@ -81,7 +81,7 @@ The most powerful part of this config. It is a two-handed, tag-based, SQLite-bac
 
 ### HUD Modes
 - **Menu mode** (default): Press `SPC a` to open a full Hydra menu with live preview of all 16 slots.
-- **Command mode**: `M-x command` (or `:command`) shows a persistent tmux-style HUD at top (right hand) + bottom (left hand). Press `M-x menu` to return to menu.
+- **Command mode**: (`:command`) shows a persistent tmux-style HUD at top (right hand) + bottom (left hand). Type (`:menu`) to return to menu.
 
 ### Speed Dial Keybindings (inside Hydra)
 
