@@ -1,5 +1,7 @@
 # Emacs Configuration
 
+	*Note:* This configuration has been tested exclusively on *Emacs 30.2.* Compatibility with older versions is not guaranteed.
+
 A fast, minimal, Evil-first Emacs setup built for power users who want Vim muscle memory, zero friction, and deep integration across coding, knowledge management, PDFs, and terminal workflows.
 
 This config is deliberately opinionated:
