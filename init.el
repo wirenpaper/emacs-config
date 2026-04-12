@@ -828,7 +828,7 @@ Displays the calculated breadcrumb path in the echo area."
   (global-corfu-mode)
   :config
   ;; ========================================================
-  ;; THE "ENTER CYCLES DOWN" FIX 💀
+  ;; THE "ENTER CYCLES DOWN" FIX
   ;; ========================================================
   ;; Emacs forcefully translates C-j to Enter. So we just make Enter cycle down!
   ;; Note: Because C-m IS physically Enter in a terminal, it will also cycle down.
