@@ -204,8 +204,8 @@
 
 ;; 2. Bind the Evil Ex commands (:typewriter and :retro)
 (with-eval-after-load 'evil
-  (evil-ex-define-cmd "typewriter" 'my/font-typewriter)
-  (evil-ex-define-cmd "acplus" 'my/font-retro))
+  (evil-ex-define-cmd "vintage" 'my/font-typewriter)
+  (evil-ex-define-cmd "oldschool" 'my/font-retro))
 
 ;; ==========================================
 ;; Fix RTL/Arabic Cursor Movement in Evil Mode
