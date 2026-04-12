@@ -23,3 +23,4 @@ url/
 .gitignore
 *.point
 speed-dial.sqlite
+full_history.txt
