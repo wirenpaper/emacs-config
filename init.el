@@ -153,7 +153,7 @@
   ;; 1. PURGE EMACS MEMORY: Destroy all relative scaling logic.
   (setq face-font-rescale-alist nil)
 
-  ;; 2. Arabic: The Absolute Pixel Lock
+  ;; 2. Arabic: The Absolute Pixel Lock (not quite)
   (when (member my/font-arabic-name (font-family-list))
     (set-fontset-font t 'arabic 
                       (font-spec :family my/font-arabic-name 
