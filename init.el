@@ -147,7 +147,8 @@
                                       (font-family-list)))
 
 (defun my/setup-font-fallbacks ()
-  "Ensure Arabic and Symbols are locked in, completely unaffected by the English font."
+  "Ensure Arabic and Symbols are locked in,
+   completely unaffected by the English font."
   
   ;; 1. PURGE EMACS MEMORY: Destroy all relative scaling logic.
   (setq face-font-rescale-alist nil)
