@@ -7,7 +7,6 @@
 ;; ==========================================
 ;; 0. Emacs Core & Custom UI Settings
 ;; ==========================================
-
 (server-start)
 
 ;; Always prefer newer source files over stale byte-compiled files
@@ -311,13 +310,13 @@
 ;;  (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
 ;; ==========================================
-;; Remove bar
+;; Remove bar (Terminal Only)
 ;; ==========================================
-(setq-default mode-line-format nil)
-
+(unless (display-graphic-p)
+  (setq-default mode-line-format nil))
 
 ;; ==========================================
-;; Calculate Location
+;; Calculate Location (Terminal Only)
 ;; ==========================================
 (defvar my-last-ruler-message nil
   "Store the last position message to prevent overwriting active messages.")
@@ -350,10 +349,9 @@
               (setq my-last-ruler-message (concat (make-string padding ?\s) info-str))
               (message "%s" my-last-ruler-message))))))))
 
-;; Make sure you still have your defvar defined above this!
-;; (defvar my-last-ruler-message nil "Store the last position message.")
-
-(add-hook 'post-command-hook #'my-show-position-echo)
+;; ONLY attach it to the post-command hook if we are in the terminal (-nw)
+(unless (display-graphic-p)
+  (add-hook 'post-command-hook #'my-show-position-echo))
 
 ;; ==========================================
 ;; Reload / Compile Config Functions
@@ -1325,33 +1323,33 @@ Displays the calculated breadcrumb path in the echo area."
 ;; ==========================================
 
 ;; 1. Disable Eglot's semantic highlighting from the language server
-(with-eval-after-load 'eglot
-  (add-to-list 'eglot-ignored-server-capabilities :semanticTokensProvider))
-
-;; 2. Strip colors from all syntax faces EXCEPT comments
-(defun mystrip-syntax-colors (&rest _)
-  "Make all code look like plain text, leaving only comments colored."
-  (dolist (face '(font-lock-builtin-face
-                  font-lock-constant-face
-                  font-lock-doc-face
-                  font-lock-function-name-face
-                  font-lock-keyword-face
-                  font-lock-string-face
-                  font-lock-type-face
-                  font-lock-variable-name-face
-                  font-lock-preprocessor-face))
-    (set-face-attribute face nil 
-                        :foreground 'unspecified 
-                        :background 'unspecified 
-                        :weight 'unspecified 
-                        :slant 'unspecified 
-                        :inherit 'default)))
-
-;; Run it once during startup
-(mystrip-syntax-colors)
-
-;; 3. Bulletproof: Re-apply the stripping immediately after any theme is loaded or toggled
-(advice-add 'load-theme :after #'mystrip-syntax-colors)
+;;(with-eval-after-load 'eglot
+;;  (add-to-list 'eglot-ignored-server-capabilities :semanticTokensProvider))
+;;
+;;;; 2. Strip colors from all syntax faces EXCEPT comments
+;;(defun mystrip-syntax-colors (&rest _)
+;;  "Make all code look like plain text, leaving only comments colored."
+;;  (dolist (face '(font-lock-builtin-face
+;;                  font-lock-constant-face
+;;                  font-lock-doc-face
+;;                  font-lock-function-name-face
+;;                  font-lock-keyword-face
+;;                  font-lock-string-face
+;;                  font-lock-type-face
+;;                  font-lock-variable-name-face
+;;                  font-lock-preprocessor-face))
+;;    (set-face-attribute face nil 
+;;                        :foreground 'unspecified 
+;;                        :background 'unspecified 
+;;                        :weight 'unspecified 
+;;                        :slant 'unspecified 
+;;                        :inherit 'default)))
+;;
+;;;; Run it once during startup
+;;(mystrip-syntax-colors)
+;;
+;;;; 3. Bulletproof: Re-apply the stripping immediately after any theme is loaded or toggled
+;;(advice-add 'load-theme :after #'mystrip-syntax-colors)
 
 ;; =========================================
 ;; Avy: Jump to any place on the screen
@@ -1384,87 +1382,87 @@ Displays the calculated breadcrumb path in the echo area."
   :config
   (xclip-mode 1))
 
-;; ==========================================
-;; The "L" Programmatic Camouflage (Theme-Aware)
-;; ==========================================
-
-;; 1. Variables to hold the overlay and the micro-timer locally per buffer
-(defvar-local my-camouflage-overlay nil)
-(defvar-local my-camouflage-timer nil)
-
-;; 2. The core logic that finds and paints the chopped line
-(defun apply-camouflage-logic ()
-  "Silently applies the camouflage logic to the chopped line at the bottom.
-This targets the exact rendering artifact and masks it."
-  (when (and (not (minibufferp)) (window-live-p (selected-window)))
-    
-    ;; Make sure the overlay exists
-    (unless (overlayp my-camouflage-overlay)
-      (setq my-camouflage-overlay (make-overlay 1 1))
-      (overlay-put my-camouflage-overlay 'priority 9999))
-
-    ;; DYNAMIC THEME UPDATE: Always pull the current background color
-    (let ((bg-color (or (face-background 'default) "black")))
-      ;; Paint BOTH the text and the background with the theme's background color
-      ;; This makes the chopped line completely invisible, surviving theme changes
-      (overlay-put my-camouflage-overlay 'face `(:foreground ,bg-color :background ,bg-color)))
-
-    ;; THE EXACT LOGIC FROM YOUR SUCCESSFUL MANUAL TEST
-    (save-excursion
-      (move-to-window-line -1)
-      
-      ;; Check if vertical-motion actually moved down
-      (if (= (vertical-motion 1) 1)
-          (let ((start-pos (point)))
-            (end-of-visual-line)
-            (unless (eobp) 
-              (forward-char 1))
-            
-            ;; Apply the camouflage
-            (move-overlay my-camouflage-overlay start-pos (point)))
-        
-        ;; Hide the overlay out of the way if at the end of the file
-        (move-overlay my-camouflage-overlay 1 1)))))
-
-;; 3. The deferred trigger that waits for Emacs to finish drawing the screen
-(defun trigger-camouflage-deferred (&rest _args)
-  "Triggers the camouflage logic after a microscopic delay.
-This gives the screen time to settle before painting the line."
-  (when my-camouflage-timer
-    (cancel-timer my-camouflage-timer))
-  (setq my-camouflage-timer 
-        (run-with-idle-timer 0.01 nil #'apply-camouflage-logic)))
-
-;; 4. Attach the deferred trigger to the two main Emacs lifecycle events
-(add-hook 'post-command-hook #'trigger-camouflage-deferred)
-(add-hook 'window-scroll-functions #'trigger-camouflage-deferred)
-
-;; ==========================================
-;; Avy <-> Camouflage Compatibility Patch
-;; ==========================================
-
-(require 'cl-lib)
-
-(defun my/avy-filter-camouflage-candidates (orig-fn candidates &rest args)
-  "Intercepts Avy to remove jump targets
-   that land inside the camouflaged chopped line."
-  (let ((filtered-cands
-         (cl-remove-if
-          (lambda (cand)
-            ;; Avy candidates look like (POS . WINDOW) or ((START . END) . WINDOW)
-            (let* ((pos (if (consp (car cand)) (caar cand) (car cand)))
-                   (win (cdr cand))
-                   (buf (window-buffer win)))
-              (with-current-buffer buf
-                ;; If the candidate's position is inside the camouflage overlay, filter it out!
-                (and (bound-and-true-p my-camouflage-overlay)
-                     (overlayp my-camouflage-overlay)
-                     (> (overlay-start my-camouflage-overlay) 1)
-                     (>= pos (overlay-start my-camouflage-overlay))))))
-          candidates)))
-    ;; Pass the cleaned-up list back to Avy
-    (apply orig-fn filtered-cands args)))
-
-;; Apply the patch to Avy's core rendering engine
-(with-eval-after-load 'avy
-  (advice-add 'avy-process :around #'my/avy-filter-camouflage-candidates))
+;;;; ==========================================
+;;;; The "L" Programmatic Camouflage (Theme-Aware)
+;;;; ==========================================
+;;
+;;;; 1. Variables to hold the overlay and the micro-timer locally per buffer
+;;(defvar-local my-camouflage-overlay nil)
+;;(defvar-local my-camouflage-timer nil)
+;;
+;;;; 2. The core logic that finds and paints the chopped line
+;;(defun apply-camouflage-logic ()
+;;  "Silently applies the camouflage logic to the chopped line at the bottom.
+;;This targets the exact rendering artifact and masks it."
+;;  (when (and (not (minibufferp)) (window-live-p (selected-window)))
+;;    
+;;    ;; Make sure the overlay exists
+;;    (unless (overlayp my-camouflage-overlay)
+;;      (setq my-camouflage-overlay (make-overlay 1 1))
+;;      (overlay-put my-camouflage-overlay 'priority 9999))
+;;
+;;    ;; DYNAMIC THEME UPDATE: Always pull the current background color
+;;    (let ((bg-color (or (face-background 'default) "black")))
+;;      ;; Paint BOTH the text and the background with the theme's background color
+;;      ;; This makes the chopped line gray, surviving theme changes
+;;      (overlay-put my-camouflage-overlay 'face `(:foreground "gray" :background ,bg-color)))
+;;
+;;    ;; THE EXACT LOGIC FROM YOUR SUCCESSFUL MANUAL TEST
+;;    (save-excursion
+;;      (move-to-window-line -1)
+;;      
+;;      ;; Check if vertical-motion actually moved down
+;;      (if (= (vertical-motion 1) 1)
+;;          (let ((start-pos (point)))
+;;            (end-of-visual-line)
+;;            (unless (eobp) 
+;;              (forward-char 1))
+;;            
+;;            ;; Apply the camouflage
+;;            (move-overlay my-camouflage-overlay start-pos (point)))
+;;        
+;;        ;; Hide the overlay out of the way if at the end of the file
+;;        (move-overlay my-camouflage-overlay 1 1)))))
+;;
+;;;; 3. The deferred trigger that waits for Emacs to finish drawing the screen
+;;(defun trigger-camouflage-deferred (&rest _args)
+;;  "Triggers the camouflage logic after a microscopic delay.
+;;This gives the screen time to settle before painting the line."
+;;  (when my-camouflage-timer
+;;    (cancel-timer my-camouflage-timer))
+;;  (setq my-camouflage-timer 
+;;        (run-with-idle-timer 0.01 nil #'apply-camouflage-logic)))
+;;
+;;;; 4. Attach the deferred trigger to the two main Emacs lifecycle events
+;;(add-hook 'post-command-hook #'trigger-camouflage-deferred)
+;;(add-hook 'window-scroll-functions #'trigger-camouflage-deferred)
+;;
+;;;; ==========================================
+;;;; Avy <-> Camouflage Compatibility Patch
+;;;; ==========================================
+;;
+;;(require 'cl-lib)
+;;
+;;(defun my/avy-filter-camouflage-candidates (orig-fn candidates &rest args)
+;;  "Intercepts Avy to remove jump targets
+;;   that land inside the camouflaged chopped line."
+;;  (let ((filtered-cands
+;;         (cl-remove-if
+;;          (lambda (cand)
+;;            ;; Avy candidates look like (POS . WINDOW) or ((START . END) . WINDOW)
+;;            (let* ((pos (if (consp (car cand)) (caar cand) (car cand)))
+;;                   (win (cdr cand))
+;;                   (buf (window-buffer win)))
+;;              (with-current-buffer buf
+;;                ;; If the candidate's position is inside the camouflage overlay, filter it out!
+;;                (and (bound-and-true-p my-camouflage-overlay)
+;;                     (overlayp my-camouflage-overlay)
+;;                     (> (overlay-start my-camouflage-overlay) 1)
+;;                     (>= pos (overlay-start my-camouflage-overlay))))))
+;;          candidates)))
+;;    ;; Pass the cleaned-up list back to Avy
+;;    (apply orig-fn filtered-cands args)))
+;;
+;;;; Apply the patch to Avy's core rendering engine
+;;(with-eval-after-load 'avy
+;;  (advice-add 'avy-process :around #'my/avy-filter-camouflage-candidates))
