@@ -139,51 +139,72 @@
 ;; Typography / Font Settings
 ;; ==========================================
 
-(let* ((my-english-font "CMU Typewriter Text")
-       (my-arabic-font  "Scheherazade New")
-       ;; Dynamically find whatever NixOS decided to name JetBrains or Hack
-       (my-symbol-font  (seq-find (lambda (f) (string-match-p "JetBrains\\|Hack" f)) 
-                                  (font-family-list))))
+(defvar my/font-typewriter-name "CMU Typewriter Text")
+(defvar my/font-retro-name "AcPlus IBM VGA 8x16:pixelsize=32:antialias=true:autohint=false")
 
-  ;; 1. Set primary English font with a heavier weight
-  (when (member my-english-font (font-family-list))
-    (set-face-attribute 'default nil 
-                        :font my-english-font 
-                        :weight 'semi-bold 
-                        :height 200))
+(defvar my/font-arabic-name "Scheherazade New")
+(defvar my/font-symbol-name (seq-find (lambda (f) (string-match-p "JetBrains\\|Hack" f)) 
+                                      (font-family-list)))
 
-  ;; 2. Set Arabic font, scale it properly, and FORCE normal weight
-  (when (member my-arabic-font (font-family-list))
-    (add-to-list 'face-font-rescale-alist (cons my-arabic-font 1.35))
-    ;; THE FIX: Explicitly request :weight 'normal so it ignores the default semi-bold
-    (set-fontset-font t 'arabic (font-spec :family my-arabic-font :weight 'normal)))
+(defun my/setup-font-fallbacks ()
+  "Ensure Arabic and Symbols are locked in, completely unaffected by the English font."
+  
+  ;; 1. PURGE EMACS MEMORY: Destroy all relative scaling logic.
+  (setq face-font-rescale-alist nil)
 
-  ;; 3. THE FIX: Handle Fallback Symbols and Override CMU
-  (when my-symbol-font
-    ;; FORCE the symbol font to also be normal weight
-    (let ((sym-font-spec (font-spec :family my-symbol-font :weight 'normal)))
+  ;; 2. Arabic: The Absolute Pixel Lock
+  (when (member my/font-arabic-name (font-family-list))
+    (set-fontset-font t 'arabic 
+                      (font-spec :family my/font-arabic-name 
+                                 :size 36         ;; Integer = EXACT pixels (ignores DPI)
+                                 :weight 'bold))) ;; Lock thickness
 
-      ;; Fallbacks for normal symbols (lines, corners, icons)
-      (set-fontset-font t '(#x2500 . #x25FF) sym-font-spec nil 'prepend)
-      (set-fontset-font t '(#x2600 . #x26FF) sym-font-spec nil 'prepend)
-      (set-fontset-font t '(#xE000 . #xF8FF) sym-font-spec nil 'prepend)
+  ;; 3. Symbols
+  (when my/font-symbol-name
+    (let ((sym-spec (font-spec :family my/font-symbol-name 
+                               :weight 'normal)))
+      (set-fontset-font t '(#x2500 . #x25FF) sym-spec nil 'prepend)
+      (set-fontset-font t '(#x2600 . #x26FF) sym-spec nil 'prepend)
+      (set-fontset-font t '(#xE000 . #xF8FF) sym-spec nil 'prepend)
 
-      ;; THE OVAL HIJACK: CMU Typewriter stubbornly claims it has the ○ character.
-      ;; We bypass the font system entirely and force the Emacs Display Engine
-      ;; to draw these 4 Jujutsu graph characters using the Nerd Font face.
       (make-face 'my-jj-symbol-face)
-      ;; Ensure the hijacked face also rejects the global semi-bold
-      (set-face-attribute 'my-jj-symbol-face nil :family my-symbol-font :weight 'normal)
+      (set-face-attribute 'my-jj-symbol-face nil :font sym-spec)
 
       (unless standard-display-table
         (setq standard-display-table (make-display-table)))
 
       (dolist (char '(?○ ?● ?◆ ?◇))
         (aset standard-display-table char 
-              (vector (make-glyph-code char 'my-jj-symbol-face))))))
+              (vector (make-glyph-code char 'my-jj-symbol-face)))))))
 
-  ;; Force Emacs to clear the screen cache and redraw
-  (clear-face-cache t))
+(defun my/font-typewriter ()
+  "Switch to CMU Typewriter (Semi-Bold)."
+  (interactive)
+  (set-face-attribute 'default nil 
+                      :font my/font-typewriter-name 
+                      :weight 'semi-bold 
+                      :height 200)
+  (my/setup-font-fallbacks)
+  (clear-face-cache t)
+  (message "Font: CMU Typewriter Text (Semi-Bold)"))
+
+(defun my/font-retro ()
+  "Switch to IBM VGA (Normal weight, Xft spec)."
+  (interactive)
+  (set-face-attribute 'default nil 
+                      :font my/font-retro-name 
+                      :weight 'normal)
+  (my/setup-font-fallbacks)
+  (clear-face-cache t)
+  (message "Font: AcPlus IBM VGA 8x16 (Retro)"))
+
+;; 1. Apply Typewriter as the default on startup
+(my/font-typewriter)
+
+;; 2. Bind the Evil Ex commands (:typewriter and :retro)
+(with-eval-after-load 'evil
+  (evil-ex-define-cmd "typewriter" 'my/font-typewriter)
+  (evil-ex-define-cmd "acplus" 'my/font-retro))
 
 ;; ==========================================
 ;; Fix RTL/Arabic Cursor Movement in Evil Mode
