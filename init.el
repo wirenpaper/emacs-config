@@ -863,6 +863,7 @@ Displays the calculated breadcrumb path in the echo area."
   :hook
   ((c-mode . eglot-ensure)
    (c++-mode . eglot-ensure)
+   (python-mode . eglot-ensure) ;; <-- ADDED: Start LSP automatically for Python
    ;; FIX: Prevent Eldoc from stacking hover documentation with function signatures
    (eglot-managed-mode . (lambda () (setq-local eldoc-documentation-strategy #'eldoc-documentation-default))))
   :custom
@@ -882,6 +883,10 @@ Displays the calculated breadcrumb path in the echo area."
                  . ("clangd"
                     "--experimental-modules-support"
                     "--fallback-style=BasedOnStyle: LLVM, IndentWidth: 8, TabWidth: 8, UseTab: Always, BreakBeforeBraces: Linux, IndentCaseLabels: false, BinPackArguments: false, BinPackParameters: false")))
+
+  ;; PYTHON: Tell Eglot to use basedpyright
+  (add-to-list 'eglot-server-programs
+               '(python-mode . ("basedpyright-langserver" "--stdio")))
 
   (with-eval-after-load 'evil
     (evil-define-key 'normal eglot-mode-map
@@ -918,6 +923,29 @@ Displays the calculated breadcrumb path in the echo area."
 ;; Add this function to the hooks for C and C++ modes
 (add-hook 'c-mode-hook #'my/c-c++-hook)
 (add-hook 'c++-mode-hook #'my/c-c++-hook)
+
+;; ==========================================
+;; Python Indentation & Formatting
+;; ==========================================
+
+;; Tell the byte-compiler this variable exists to silence the warning
+(defvar python-indent-offset)
+
+;; Define a function to set Python specific indentation (Spaces, no Tabs!)
+(defun my/python-hook ()
+  "Custom settings for Python mode."
+  ;; Python strictly requires 4 spaces
+  (setq python-indent-offset 4)
+  (setq tab-width 4)
+  
+  ;; Force Emacs to use SPACES instead of tabs for Python!
+  (setq indent-tabs-mode nil) 
+  
+  ;; Stop Emacs from fighting your manual line breaks
+  (electric-indent-local-mode -1))
+
+;; Add this function to the hook for Python mode
+(add-hook 'python-mode-hook #'my/python-hook)
 
 ;; ==========================================
 ;; 12. Vim-like Scrolling and End-of-Buffer
