@@ -65,7 +65,7 @@
 (defvar my/speed-dial-mode 'normal 
   "Can be `normal', `pick', `drop', `tag', or `untag'.")
 
-(defvar my/pending-move-src nil 
+(defvar my/pending-move-src nil
   "Cons cell (tag . slot) representing the slot being moved.")
 
 (defvar my/pending-tag-target nil 

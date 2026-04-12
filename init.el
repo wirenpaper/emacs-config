@@ -188,11 +188,69 @@
 ;; ==========================================
 
 (setq visual-order-cursor-movement t)
+
 (with-eval-after-load 'evil
-  (define-key evil-motion-state-map (kbd "<left>") 'left-char)
-  (define-key evil-motion-state-map (kbd "<right>") 'right-char)
-  (define-key evil-motion-state-map (kbd "h") 'left-char)
-  (define-key evil-motion-state-map (kbd "l") 'right-char))
+  ;; 1. Define L as an official Evil motion so the visual highlight box draws correctly
+  (evil-define-motion my/evil-right-char (count)
+    "Visual-order right movement that strictly respects Vim line boundaries."
+    :type exclusive
+    (let ((count (or count 1)))
+      (dotimes (_ count)
+        (let ((prev (point))
+              (prev-bol (line-beginning-position)))
+          (right-char 1)
+          ;; If the line-beginning changed, we stepped to a new line. Snap back!
+          (when (/= (line-beginning-position) prev-bol)
+            (goto-char prev)
+            (user-error "End of line"))))))
+
+  ;; 2. Define H as an official Evil motion
+  (evil-define-motion my/evil-left-char (count)
+    "Visual-order left movement that strictly respects Vim line boundaries."
+    :type exclusive
+    (let ((count (or count 1)))
+      (dotimes (_ count)
+        (let ((prev (point))
+              (prev-bol (line-beginning-position)))
+          (left-char 1)
+          (when (/= (line-beginning-position) prev-bol)
+            (goto-char prev)
+            (user-error "Beginning of line"))))))
+
+  ;; 3. Bind them to the Evil motion map
+  (define-key evil-motion-state-map (kbd "<left>") 'my/evil-left-char)
+  (define-key evil-motion-state-map (kbd "<right>") 'my/evil-right-char)
+  (define-key evil-motion-state-map (kbd "h") 'my/evil-left-char)
+  (define-key evil-motion-state-map (kbd "l") 'my/evil-right-char))
+
+;; ==========================================
+;; Fix Visual Region Spilling (Vim Rendering)
+;; ==========================================
+
+(declare-function face-remap-remove-relative "face-remap")
+
+(defvar-local my/evil-visual-extend-state 'unknown)
+(defvar-local my/evil-region-remap-cookie nil)
+
+(defun my/fix-visual-region-extension ()
+  "Stop extending region face to the edge of the screen in any visual mode."
+  (when (fboundp 'evil-visual-state-p)
+    ;; If we are in ANY visual state (v, V, or C-v), turn off screen extension
+    (let ((desired-state (if (evil-visual-state-p) 'no-extend 'extend)))
+      (unless (eq desired-state my/evil-visual-extend-state)
+        (setq my/evil-visual-extend-state desired-state)
+        
+        ;; Remove old face modification
+        (when my/evil-region-remap-cookie
+          (face-remap-remove-relative my/evil-region-remap-cookie)
+          (setq my/evil-region-remap-cookie nil))
+        
+        ;; Apply new face modification (disable extension)
+        (when (eq desired-state 'no-extend)
+          (setq my/evil-region-remap-cookie
+                (face-remap-add-relative 'region :extend nil)))))))
+
+(add-hook 'post-command-hook #'my/fix-visual-region-extension)
 
 ;; ==========================================
 ;; Make ESC quit prompts and cancel chords
