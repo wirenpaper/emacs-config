@@ -147,20 +147,21 @@
 
   ;; 1. Set primary English font with a heavier weight
   (when (member my-english-font (font-family-list))
-    ;; Try :weight 'semi-bold or 'bold if 'medium isn't dark enough
     (set-face-attribute 'default nil 
                         :font my-english-font 
                         :weight 'semi-bold 
                         :height 200))
 
-  ;; 2. Set Arabic font and scale it properly
+  ;; 2. Set Arabic font, scale it properly, and FORCE normal weight
   (when (member my-arabic-font (font-family-list))
     (add-to-list 'face-font-rescale-alist (cons my-arabic-font 1.35))
-    (set-fontset-font t 'arabic (font-spec :family my-arabic-font)))
+    ;; THE FIX: Explicitly request :weight 'normal so it ignores the default semi-bold
+    (set-fontset-font t 'arabic (font-spec :family my-arabic-font :weight 'normal)))
 
   ;; 3. THE FIX: Handle Fallback Symbols and Override CMU
   (when my-symbol-font
-    (let ((sym-font-spec (font-spec :family my-symbol-font)))
+    ;; FORCE the symbol font to also be normal weight
+    (let ((sym-font-spec (font-spec :family my-symbol-font :weight 'normal)))
 
       ;; Fallbacks for normal symbols (lines, corners, icons)
       (set-fontset-font t '(#x2500 . #x25FF) sym-font-spec nil 'prepend)
@@ -171,7 +172,8 @@
       ;; We bypass the font system entirely and force the Emacs Display Engine
       ;; to draw these 4 Jujutsu graph characters using the Nerd Font face.
       (make-face 'my-jj-symbol-face)
-      (set-face-attribute 'my-jj-symbol-face nil :family my-symbol-font)
+      ;; Ensure the hijacked face also rejects the global semi-bold
+      (set-face-attribute 'my-jj-symbol-face nil :family my-symbol-font :weight 'normal)
 
       (unless standard-display-table
         (setq standard-display-table (make-display-table)))
