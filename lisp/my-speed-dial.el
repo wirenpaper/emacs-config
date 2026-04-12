@@ -133,7 +133,14 @@ Used to rank directories by 'closeness' to the current workspace."
                      (record-str (nth 1 (car row)))
                      (target-path (my/sd-get-absolute-path record-str)))
                 (if target-path
-                    (let* ((all-rows (sqlite-select my/sd-db "SELECT record FROM speed_dial WHERE workspace=?" (list root)))
+                    ;; ONLY fetch records for currently active tags (global + current right hand)
+                    (let* ((active-tags (if my/current-speed-dial-tag
+                                            (list "global" my/current-speed-dial-tag)
+                                          (list "global")))
+                           (placeholders (mapconcat (lambda (_) "?") active-tags ","))
+                           (query (format "SELECT record FROM speed_dial WHERE workspace=? AND tag IN (%s)" placeholders))
+                           (args (append (list root) active-tags))
+                           (all-rows (sqlite-select my/sd-db query args))
                            (all-paths (delq nil (mapcar (lambda (r) (my/sd-get-absolute-path (car r))) all-rows))))
                       (setq val (my/shortest-unique-path target-path all-paths)))
                   (setq val raw-name))))))))
