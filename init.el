@@ -444,15 +444,36 @@
 
 (use-package org-transclusion
   :config
-  (evil-define-key 'normal 'global
+  (evil-define-key 'normal 'org-mode-map
     (kbd "<leader> n t") 'org-transclusion-mode
     (kbd "<leader> n a") 'org-transclusion-add
     (kbd "<leader> n m") 'org-transclusion-make-from-link
-    (kbd "<leader> n r") 'my/org-transclusion-remove-at-point
-    (kbd "<leader> n o") 'my/org-transclusion-open-source-at-point
+    (kbd "<leader> n r") 'org-transclusion-remove
 
-;; NEW: SPC n b = jump backwards (show ALL places that transclude this file/ID)
-    (kbd "<leader> n b") 'my/org-transclusion-backlinks))
+    ;; LSP-style, only inside Org files
+    (kbd "g d") 'my/org-transclusion-open-source-at-point   ; gd = go to definition/source
+    (kbd "g r") 'my/org-transclusion-backlinks              ; gr = go to references/backlinks
+    (kbd "K") 'my/org-transclusion-toggle))
+
+(defun my/org-transclusion-toggle ()
+  "K = true toggle. Works on raw #+transclude: line OR inside expanded content."
+  (interactive)
+  (cond
+   ;; Already inside expanded transclusion → close it
+   ((org-transclusion-within-transclusion-p)
+    (org-transclusion-remove)
+    (message "Transclusion closed"))
+
+   ;; On a #+transclude: line (even with spaces) → open it
+   ((save-excursion
+      (beginning-of-line)
+      (looking-at "^[ \t]*#\\+transclude:"))
+    (org-transclusion-add)
+    (message "Transclusion opened"))
+
+   ;; Fallback
+   (t
+    (message "Not on a transclude line or inside one"))))
 
 (defun my/org-transclusion-backlinks ()
   "From the source file, show every note that
