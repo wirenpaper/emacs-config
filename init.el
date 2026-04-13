@@ -150,14 +150,14 @@
    completely unaffected by the English font."
   
   ;; 1. PURGE EMACS MEMORY: Destroy all relative scaling logic.
-  (setq face-font-rescale-alist nil)
+  ;;(setq face-font-rescale-alist nil)
 
-  ;; 2. Arabic: The Absolute Pixel Lock (not quite)
+  ;; 2. Arabic: The Absolute Pixel Lock + Weight Override
   (when (member my/font-arabic-name (font-family-list))
     (set-fontset-font t 'arabic 
                       (font-spec :family my/font-arabic-name 
-                                 :size 36         ;; Integer = EXACT pixels (ignores DPI)
-                                 :weight 'bold))) ;; Lock thickness
+                                 :size 36
+                                 :weight 'normal))) ;; <-- This blocks the semi-bold bleed-over!
 
   ;; 3. Symbols
   (when my/font-symbol-name
@@ -182,7 +182,7 @@
   (interactive)
   (set-face-attribute 'default nil 
                       :font my/font-typewriter-name 
-                      :weight 'semi-bold 
+                      :weight 'semi-bold ;; English gets semi-bold
                       :height 200)
   (my/setup-font-fallbacks)
   (clear-face-cache t)
@@ -446,7 +446,8 @@
   :config
   (evil-define-key 'normal 'global
     (kbd "<leader> n t") 'org-transclusion-mode
-    (kbd "<leader> n a") 'org-transclusion-add))
+    (kbd "<leader> n a") 'org-transclusion-add
+    (kbd "<leader> n m") 'org-transclusion-make-from-link))
 
 (use-package org-download
   :hook ((dired-mode . org-download-enable)
@@ -472,6 +473,36 @@
   (org-appear-autoemphasis t)
   (org-appear-autolinks t)
   (org-appear-autosubmarkers t))
+
+(use-package org-id
+  :ensure nil ; built into Emacs
+  :custom
+  (org-id-track-globally t)
+  (org-id-link-to-org-use-id 'create-if-interactive-and-no-custom-alist)
+  :config
+  (evil-define-key 'normal 'global
+    (kbd "<leader> n u") 'org-id-get-create)) ; 'u' for Unique ID
+
+;; ==========================================
+;; SPC n p now ALWAYS inserts [[id:UUID][title]] 
+;; (strips the ::diag-matrix crap completely)
+;; ==========================================
+(defun my/org-insert-link-clean ()
+  "Insert link as [[id:UUID][title]] — completely removes any ::search part."
+  (interactive)
+  (if (null org-stored-links)
+      (message "No stored link! Do SPC n y first.")
+    (let* ((link-info (car org-stored-links))
+           (raw-link (car link-info))
+           (desc (or (cadr link-info) "Link")))
+      ;; Strip everything after :: (removes ::diag-matrix or any target)
+      (when (string-match "\\(id:[^:]+\\)::" raw-link)
+        (setq raw-link (match-string 1 raw-link)))
+      (insert (format "[[%s][%s]]" raw-link desc)))))
+
+(evil-define-key 'normal 'global
+  (kbd "<leader> n y") 'org-store-link   ; 'y' for Yank link
+  (kbd "<leader> n p") #'my/org-insert-link-clean)
 
 ;; ==========================================
 ;; 6. Setup Eshell & Eat 
