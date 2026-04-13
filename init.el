@@ -543,8 +543,16 @@
         (setq raw-link (match-string 1 raw-link)))
       (insert (format "[[%s][%s]]" raw-link desc)))))
 
+;; ==========================================
+;; Smart SPC n y on headings → stores clean [[id:UUID][Heading Name]]
+;; ==========================================
+(defun my/org-store-link-smart ()
+  "Store link as [[id:UUID][Heading Text]] when cursor is on a heading."
+  (interactive)
+  (org-store-link nil t))
+
 (evil-define-key 'normal 'global
-  (kbd "<leader> n y") 'org-store-link   ; 'y' for Yank link
+  (kbd "<leader> n y") #'my/org-store-link-smart   ; 'y' for Yank link
   (kbd "<leader> n p") #'my/org-insert-link-clean)
 
 ;; ==========================================
