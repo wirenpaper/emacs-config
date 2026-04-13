@@ -444,15 +444,13 @@
 
 (use-package org-transclusion
   :config
-  (evil-define-key 'normal 'org-mode-map
+  (evil-define-key '(normal motion) 'org-mode-map
     (kbd "<leader> n t") 'org-transclusion-mode
     (kbd "<leader> n a") 'org-transclusion-add
     (kbd "<leader> n m") 'org-transclusion-make-from-link
     (kbd "<leader> n r") 'org-transclusion-remove
-
-    ;; LSP-style, only inside Org files
-    (kbd "g d") 'my/org-transclusion-open-source-at-point   ; gd = go to definition/source
-    (kbd "g r") 'my/org-transclusion-backlinks              ; gr = go to references/backlinks
+    (kbd "g d") 'my/org-transclusion-open-source-at-point
+    (kbd "g r") 'my/org-transclusion-backlinks
     (kbd "K") 'my/org-transclusion-toggle))
 
 (defun my/org-transclusion-toggle ()
@@ -1460,17 +1458,22 @@ Displays the calculated breadcrumb path in the echo area."
 (use-package avy
   :ensure t
   :custom
-  ;; How long it waits after your last keystroke before showing jump labels
-  ;; 0.3 is usually the sweet spot for fast typists.
   (avy-timeout-seconds 0.1)
-  
-  ;; The keys used for the jump overlays (home row for speed)
   (avy-keys '(?a ?s ?d ?f ?j ?k ?l ?\;))
   
   :config
   (with-eval-after-load 'evil
-    ;; Bind 'g s' in normal/motion states to trigger the jump
+    ;; 1. Global bindings for standard files
     (define-key evil-motion-state-map (kbd "g k") #'evil-avy-goto-char-timer)
+    (define-key evil-normal-state-map (kbd "g k") #'evil-avy-goto-char-timer)
+    
+    ;; 2. The Bulletproof Org-Mode Hook 
+    ;; This runs every time you open an org file and forces 'g k' locally,
+    ;; completely bypassing stubborn packages like evil-collection or evil-org.
+    (add-hook 'org-mode-hook
+              (lambda ()
+                (evil-local-set-key 'normal (kbd "g k") #'evil-avy-goto-char-timer)
+                (evil-local-set-key 'motion (kbd "g k") #'evil-avy-goto-char-timer)))
     
     ;; Alternatively, since you use Space as your leader key, 
     ;; uncomment this if you prefer a leader binding like "SPC j":
