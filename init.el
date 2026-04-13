@@ -1467,17 +1467,20 @@ Displays the calculated breadcrumb path in the echo area."
     (define-key evil-motion-state-map (kbd "g k") #'evil-avy-goto-char-timer)
     (define-key evil-normal-state-map (kbd "g k") #'evil-avy-goto-char-timer)
     
-    ;; 2. The Bulletproof Org-Mode Hook 
-    ;; This runs every time you open an org file and forces 'g k' locally,
-    ;; completely bypassing stubborn packages like evil-collection or evil-org.
-    (add-hook 'org-mode-hook
-              (lambda ()
-                (evil-local-set-key 'normal (kbd "g k") #'evil-avy-goto-char-timer)
-                (evil-local-set-key 'motion (kbd "g k") #'evil-avy-goto-char-timer)))
+    ;; 2. Create a reusable "bulletproof" function
+    (defun my/force-avy-gk ()
+      "Force 'g k' to trigger avy, bypassing stubborn major modes."
+      (evil-local-set-key 'normal (kbd "g k") #'evil-avy-goto-char-timer)
+      (evil-local-set-key 'motion (kbd "g k") #'evil-avy-goto-char-timer))
     
-    ;; Alternatively, since you use Space as your leader key, 
-    ;; uncomment this if you prefer a leader binding like "SPC j":
-    ;; (evil-define-key '(normal motion) 'global (kbd "<leader> j") #'evil-avy-goto-char-timer)
+    ;; 3. Apply it to any stubborn modes (add more here in the future if needed)
+    (add-hook 'org-mode-hook #'my/force-avy-gk)
+    (add-hook 'grep-mode-hook #'my/force-avy-gk)
+    (add-hook 'compilation-mode-hook #'my/force-avy-gk)
+    
+    ;; (You might also want to add these later if they give you trouble:)
+    ;; (add-hook 'dired-mode-hook #'my/force-avy-gk)
+    ;; (add-hook 'help-mode-hook #'my/force-avy-gk)
     ))
 
 ;; =========================================
