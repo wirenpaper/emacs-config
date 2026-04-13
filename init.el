@@ -448,9 +448,22 @@
     (kbd "<leader> n t") 'org-transclusion-mode
     (kbd "<leader> n a") 'org-transclusion-add
     (kbd "<leader> n m") 'org-transclusion-make-from-link
+    (kbd "<leader> n r") 'my/org-transclusion-remove-at-point
+    (kbd "<leader> n o") 'my/org-transclusion-open-source-at-point))
 
-;; NEW: SPC n r now reliably closes/removes the transclusion
-    (kbd "<leader> n r") 'my/org-transclusion-remove-at-point))
+(defun my/org-transclusion-open-source-at-point ()
+  "Jump to the original source file from #+transclude: line or inside expanded content."
+  (interactive)
+  (if (org-transclusion-within-transclusion-p)
+      (org-transclusion-open-source)
+    ;; On the raw #+transclude: line
+    (save-excursion
+      (beginning-of-line)
+      (if (re-search-forward "id:\\([0-9a-f-]\\{36\\}\\)" (line-end-position) t)
+          (let ((id (match-string 1)))
+            (org-id-goto id)
+            (message "Opened source: %s" id))
+        (message "No ID found on this line")))))
 
 (defun my/org-transclusion-remove-at-point ()
   "Remove the transclusion — works whether cursor is on the
