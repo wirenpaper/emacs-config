@@ -1469,7 +1469,7 @@ Displays the calculated breadcrumb path in the echo area."
     
     ;; 2. Create a reusable "bulletproof" function
     (defun my/force-avy-gk ()
-      "Force 'g k' to trigger avy, bypassing stubborn major modes."
+      "Force \"g k\" to trigger avy, bypassing stubborn major modes."
       (evil-local-set-key 'normal (kbd "g k") #'evil-avy-goto-char-timer)
       (evil-local-set-key 'motion (kbd "g k") #'evil-avy-goto-char-timer))
     
