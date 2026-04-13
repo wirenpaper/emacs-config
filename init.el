@@ -447,7 +447,20 @@
   (evil-define-key 'normal 'global
     (kbd "<leader> n t") 'org-transclusion-mode
     (kbd "<leader> n a") 'org-transclusion-add
-    (kbd "<leader> n m") 'org-transclusion-make-from-link))
+    (kbd "<leader> n m") 'org-transclusion-make-from-link
+
+;; NEW: SPC n r now reliably closes/removes the transclusion
+    (kbd "<leader> n r") 'my/org-transclusion-remove-at-point))
+
+(defun my/org-transclusion-remove-at-point ()
+  "Remove the transclusion — works whether cursor is on the
+   #+transclude: line OR inside the expanded content."
+  (interactive)
+  (if (org-transclusion-within-transclusion-p)
+      (org-transclusion-remove)
+    (when (looking-at "^#\\+transclude:")
+      (org-transclusion-remove)
+      (message "Transclusion removed"))))
 
 (use-package org-download
   :hook ((dired-mode . org-download-enable)
