@@ -449,10 +449,27 @@
     (kbd "<leader> n a") 'org-transclusion-add
     (kbd "<leader> n m") 'org-transclusion-make-from-link
     (kbd "<leader> n r") 'my/org-transclusion-remove-at-point
-    (kbd "<leader> n o") 'my/org-transclusion-open-source-at-point))
+    (kbd "<leader> n o") 'my/org-transclusion-open-source-at-point
+
+;; NEW: SPC n b = jump backwards (show ALL places that transclude this file/ID)
+    (kbd "<leader> n b") 'my/org-transclusion-backlinks))
+
+(defun my/org-transclusion-backlinks ()
+  "From the source file, show every note that
+   transcludes this ID. Opens a grep buffer
+   with clickable links to every #+transclude
+   that points here."
+  (interactive)
+  (let ((id (org-id-get)))
+    (if (not id)
+        (message "No :ID: property found in this file")
+      (let ((search-str (concat "id:" id)))
+        (rgrep search-str "*.org" org-roam-directory)
+        (message "Showing all back-references to ID: %s" id)))))
 
 (defun my/org-transclusion-open-source-at-point ()
-  "Jump to the original source file from #+transclude: line or inside expanded content."
+  "Jump to the original source file from #+transclude:
+   line or inside expanded content."
   (interactive)
   (if (org-transclusion-within-transclusion-p)
       (org-transclusion-open-source)
