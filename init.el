@@ -545,7 +545,34 @@
   (org-id-link-to-org-use-id 'create-if-interactive-and-no-custom-alist)
   :config
   (evil-define-key 'normal 'global
-    (kbd "<leader> n u") 'org-id-get-create)) ; 'u' for Unique ID
+    (kbd "<leader> n u") 'org-id-get-create) ; 'u' for Unique ID
+
+  ;; ==========================================
+  ;; LAZY ORG-ID UPDATER
+  ;; ==========================================
+  (defun my/lazy-org-id-update (orig-fn id &rest args)
+    "Philosophy: Only update broken links when I actually try to jump to them."
+    (condition-case nil ;; <-- 'err' changed to 'nil'
+        ;; Step 1: Try to jump normally. If it works, great.
+        (apply orig-fn id args)
+      
+      ;; Step 2: Catch the error if the link is broken (file moved)
+      (error
+       (if (y-or-n-p (format "Link broken (ID: %s)! Scan a directory to find it? " id))
+           (let ((scan-dir (read-directory-name "Folder to scan: " "~/rnd/")))
+             (message "Scanning %s for missing IDs..." scan-dir)
+             
+             ;; Step 3: Find all .org files and update the Emacs phone book
+             (org-id-update-id-locations (directory-files-recursively scan-dir "\\.org$"))
+             
+             ;; Step 4: Automatically retry the jump
+             (condition-case nil
+                 (apply orig-fn id args)
+               (error (message "Still couldn't find the ID. Are you sure it's in there?"))))
+         (message "Jump cancelled.")))))
+
+  ;; Apply our lazy-loader to the core ID jump function
+  (advice-add 'org-id-goto :around #'my/lazy-org-id-update)) ;; <-- THE MISSING PARENTHESIS IS HERE!
 
 ;; Enable C/C++ execution in Org Babel
 (require 'ob-C)
