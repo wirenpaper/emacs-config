@@ -451,7 +451,9 @@
     (kbd "<leader> n r") 'org-transclusion-remove
     (kbd "g d") 'my/org-transclusion-open-source-at-point
     (kbd "g r") 'my/org-transclusion-backlinks
-    (kbd "K") 'my/org-transclusion-toggle))
+    (kbd "K") 'my/org-transclusion-toggle
+    (kbd "g y") #'my/org-store-link-smart   ; 'y' for Yank link
+    (kbd "g p") #'my/org-insert-link-clean))
 
 (defun my/org-transclusion-toggle ()
   "K = true toggle. Works on raw #+transclude: line OR inside expanded content."
@@ -545,6 +547,9 @@
   (evil-define-key 'normal 'global
     (kbd "<leader> n u") 'org-id-get-create)) ; 'u' for Unique ID
 
+;; Enable C/C++ execution in Org Babel
+(require 'ob-C)
+
 ;; ==========================================
 ;; SPC n p now ALWAYS inserts [[id:UUID][title]] 
 ;; (strips the ::diag-matrix crap completely)
@@ -570,9 +575,9 @@
   (interactive)
   (org-store-link nil t))
 
-(evil-define-key 'normal 'global
-  (kbd "<leader> n y") #'my/org-store-link-smart   ; 'y' for Yank link
-  (kbd "<leader> n p") #'my/org-insert-link-clean)
+;;(evil-define-key 'normal 'global
+  ;;(kbd "<leader> n y") #'my/org-store-link-smart   ; 'y' for Yank link
+  ;;(kbd "<leader> n p") #'my/org-insert-link-clean)
 
 ;; ==========================================
 ;; 6. Setup Eshell & Eat 
