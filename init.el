@@ -492,18 +492,43 @@
    (t
     (message "Not on a transclude line or inside one"))))
 
+;; UPDATED: Smart backlinks function (Jump on 1 result, list on multiple)
 (defun my/org-transclusion-backlinks ()
-  "From the source file, show every note that
-transcludes this ID. Opens a grep buffer
-with clickable links to every #+transclude
-that points here."
+  "From the source file, show every note that transcludes this ID.
+If there is exactly one reference, jump to it directly.
+If there are multiple, open a grep list buffer."
   (interactive)
   (let ((id (org-id-get)))
     (if (not id)
         (message "No :ID: property found in this file")
-      (let ((search-str (concat "id:" id)))
-        (rgrep search-str "*.org" org-roam-directory)
-        (message "Showing all back-references to ID: %s" id)))))
+      (let* ((search-str (concat "id:" id))
+             ;; Fast shell command to count matches
+             (grep-cmd (format "grep -rnH --include='*.org' %s %s"
+                               (shell-quote-argument search-str)
+                               (shell-quote-argument (expand-file-name org-roam-directory))))
+             (output (shell-command-to-string grep-cmd))
+             (lines (split-string output "\n" t)))
+        (cond
+         ;; Scenario A: No references found
+         ((null lines)
+          (message "No back-references found for ID: %s" id))
+         
+         ;; Scenario B: Exactly ONE reference found
+         ((= (length lines) 1)
+          (if (string-match "^\\(.*?\\):\\([0-9]+\\):" (car lines))
+              (let ((file (match-string 1 (car lines)))
+                    (line (string-to-number (match-string 2 (car lines)))))
+                (find-file file)
+                (goto-char (point-min))
+                (forward-line (1- line))
+                (message "Jumped to the single reference in %s" (file-name-nondirectory file)))
+            ;; Fallback if regex parsing failed
+            (rgrep search-str "*.org" org-roam-directory)))
+         
+         ;; Scenario C: MULTIPLE references found
+         (t
+          (rgrep search-str "*.org" org-roam-directory)
+          (message "Showing all back-references to ID: %s" id)))))))
 
 (defun my/org-transclusion-open-source-at-point ()
   "Jump to the original source file from #+transclude:
