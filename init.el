@@ -492,34 +492,46 @@
    (t
     (message "Not on a transclude line or inside one"))))
 
-;; NEW: Emacs jumps, then we immediately force-maximize the target window
+;; NEW: Manual parsing for the "Fullscreen Takeover" jump
 (defun my/org-references-jump-replace ()
-  "Jump to the reference, maximize the new window, and kill the grep buffer."
+  "Parse the line, open target file replacing this window, and kill the list buffer."
   (interactive)
-  (let ((grep-buf (current-buffer)))
-    ;; Let Emacs do its native jump (which usually splits the screen)
-    (call-interactively 'compile-goto-error)
-    ;; Your cursor is now in the target file.
-    ;; We forcefully maximize this window, destroying the split screen.
-    (delete-other-windows)
-    ;; Clean up the grep list in the background so it is completely gone.
-    (ignore-errors (kill-buffer grep-buf))))
+  (let ((list-buf (current-buffer))
+        (line-str (thing-at-point 'line t))
+        (roam-dir (expand-file-name org-roam-directory))
+        target-file target-line)
+    
+    (when (and line-str (string-match "^\\(.*?\\):\\([0-9]+\\):" line-str))
+      (setq target-file (expand-file-name (match-string 1 line-str) roam-dir)
+            target-line (string-to-number (match-string 2 line-str))))
+    
+    (if (not target-file)
+        (message "No reference found on this line.")
+      ;; Because the list is currently fullscreen, `find-file` simply replaces
+      ;; the list with the target file in the exact same window.
+      (find-file target-file)
+      (goto-char (point-min))
+      (forward-line (1- target-line))
+      (recenter)
+      ;; Nuke the reference list buffer from memory so it doesn't linger
+      (ignore-errors (kill-buffer list-buf))
+      (message "Teleported successfully."))))
 
-;; UPDATED: Fullscreen takeover logic + Async Grep
+;; UPDATED: Pristine Custom-Painted Buffer with Fullscreen Takeover
 (defun my/org-transclusion-backlinks ()
   "Show notes transcluding this ID. 
-Instantly jumps if exactly 1. Spawns full-screen async grep if 2+."
+Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
   (interactive)
   (let ((id (org-id-get)))
     (if (not id)
         (message "No :ID: property found in this file")
       (let* ((search-str (concat "id:" id))
              (roam-dir (expand-file-name org-roam-directory))
-             ;; `-m 2` ensures instant sync check, protecting Emacs from freezing
-             (fast-grep-cmd (format "cd %s && grep -rnH -m 2 --include='*.org' %s ."
-                                    (shell-quote-argument roam-dir)
-                                    (shell-quote-argument search-str)))
-             (output (shell-command-to-string fast-grep-cmd))
+             ;; Native grep shell speed is instantaneous (takes ~10-50ms for 10k files)
+             (grep-cmd (format "cd %s && grep -rnH --include='*.org' %s ."
+                               (shell-quote-argument roam-dir)
+                               (shell-quote-argument search-str)))
+             (output (shell-command-to-string grep-cmd))
              (lines (split-string output "\n" t)))
         (cond
          ;; Scenario A: No references
@@ -534,33 +546,51 @@ Instantly jumps if exactly 1. Spawns full-screen async grep if 2+."
                 (find-file file)
                 (goto-char (point-min))
                 (forward-line (1- line))
-                ;; Also maximize just in case you started from a split screen
                 (delete-other-windows)
                 (message "Jumped to the single reference."))
             (message "Could not parse output: %s" (car lines))))
          
-         ;; Scenario C: 2+ references (Fullscreen Takeover Async Grep)
+         ;; Scenario C: 2+ references (Pristine List Takeover)
          (t
-          (let ((default-directory (file-name-as-directory roam-dir))
-                (async-cmd (format "grep --color=auto -rnH --include='*.org' %s ."
-                                   (shell-quote-argument search-str))))
-            
-            ;; Launch native async grep
-            (grep async-cmd)
-            
-            ;; The moment the buffer exists, forcefully take over the screen
-            (when (get-buffer "*grep*")
-              (switch-to-buffer "*grep*")
-              (delete-other-windows)
-              
-              ;; Hijack RET to trigger our maximize-and-destroy function
-              (with-current-buffer "*grep*"
+          (require 'compile) ; Load Emacs's built-in colors
+          (let ((buf (get-buffer-create "*Org References*")))
+            (with-current-buffer buf
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (setq default-directory (file-name-as-directory roam-dir))
+                
+                ;; Insert and MANUALLY PAINT colors so there is absolutely ZERO noise
+                (dolist (line lines)
+                  (let ((clean-line (if (string-prefix-p "./" line)
+                                        (substring line 2)
+                                      line)))
+                    (if (string-match "^\\(.*?\\):\\([0-9]+\\):\\(.*\\)$" clean-line)
+                        (let ((f-name (match-string 1 clean-line))
+                              (l-num  (match-string 2 clean-line))
+                              (text   (match-string 3 clean-line)))
+                          ;; Apply Green to file, Yellow to line number
+                          (insert (propertize f-name 'font-lock-face 'compilation-info)
+                                  ":"
+                                  (propertize l-num 'font-lock-face 'compilation-line-number)
+                                  ":"
+                                  text "\n"))
+                      (insert clean-line "\n"))))
+                
+                ;; Turn into a dumb read-only buffer
+                (special-mode)
+                
+                ;; Bind our flawless takeover jump function
                 (evil-local-set-key 'normal (kbd "RET") 'my/org-references-jump-replace)
                 (evil-local-set-key 'motion (kbd "RET") 'my/org-references-jump-replace)
                 (local-set-key (kbd "RET") 'my/org-references-jump-replace)
-                (local-set-key (kbd "<return>") 'my/org-references-jump-replace)))
+                (local-set-key (kbd "<return>") 'my/org-references-jump-replace)
+                
+                (goto-char (point-min))))
             
-            (message "Select a reference and press RET to jump."))))))))
+            ;; Take over the entire screen with the clean buffer
+            (switch-to-buffer buf)
+            (delete-other-windows)
+            (message "Showing %d references. Press RET to teleport." (length lines)))))))))
 
 (defun my/org-transclusion-open-source-at-point ()
   "Jump to the original source file from #+transclude:
