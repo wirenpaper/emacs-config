@@ -493,9 +493,19 @@
     (message "Not on a transclude line or inside one"))))
 
 ;; ==========================================
-;; MANUAL LINK REVEAL LOGIC
+;; MANUAL LINK REVEAL (TOGGLE) LOGIC
 ;; ==========================================
 (defvar-local my/org-manual-link-bounds nil)
+
+(defun my/org-hide-manual-link ()
+  "Force re-hide the manual link."
+  (when my/org-manual-link-bounds
+    (let ((beg (car my/org-manual-link-bounds))
+          (end (cdr my/org-manual-link-bounds)))
+      ;; Force Emacs to re-hide it cleanly
+      (font-lock-flush beg end)
+      (setq my/org-manual-link-bounds nil)
+      (remove-hook 'post-command-hook #'my/org-hide-link-on-leave t))))
 
 (defun my/org-hide-link-on-leave ()
   "Re-hide the link when cursor moves outside its bounds."
@@ -503,38 +513,45 @@
     (let ((beg (car my/org-manual-link-bounds))
           (end (cdr my/org-manual-link-bounds)))
       (when (or (< (point) beg) (>= (point) end))
-        ;; Cursor left the link. Force Emacs to re-hide it cleanly.
-        (font-lock-flush beg end)
-        (setq my/org-manual-link-bounds nil)
-        (remove-hook 'post-command-hook #'my/org-hide-link-on-leave t)))))
+        (my/org-hide-manual-link)))))
 
-(defun my/org-show-link-under-cursor ()
-  "Manually unfold the link at point. It automatically folds when cursor leaves."
+(defun my/org-toggle-link-under-cursor ()
+  "Toggle the link unfold. Auto-hides on leave."
   (interactive)
-  (let* ((context (org-element-context))
-         (type (car context)))
-    (if (eq type 'link)
-        (let ((beg (org-element-property :begin context))
-              (end (org-element-property :end context)))
-          ;; Strip all invisibility properties so the ID shows up
-          (with-silent-modifications
-            (remove-text-properties beg end '(invisible nil)))
-          ;; Start watching the cursor to re-hide it later
-          (setq my/org-manual-link-bounds (cons beg end))
-          (add-hook 'post-command-hook #'my/org-hide-link-on-leave nil t)
-          (message "Link revealed. It will auto-hide when you move away."))
-      (message "No link under cursor."))))
+  (if (and my/org-manual-link-bounds
+           (>= (point) (car my/org-manual-link-bounds))
+           (< (point) (cdr my/org-manual-link-bounds)))
+      ;; Already active and cursor is inside -> Toggle OFF
+      (progn
+        (my/org-hide-manual-link)
+        (message "Link hidden."))
+    ;; Not active -> Try to Toggle ON
+    (let* ((context (org-element-context))
+           (type (car context)))
+      (if (eq type 'link)
+          (let ((beg (org-element-property :begin context))
+                (end (org-element-property :end context)))
+            ;; Clean up just in case another one was active somewhere else
+            (my/org-hide-manual-link) 
+            ;; Strip all invisibility properties so the ID shows up
+            (with-silent-modifications
+              (remove-text-properties beg end '(invisible nil)))
+            ;; Set bounds and watch the cursor
+            (setq my/org-manual-link-bounds (cons beg end))
+            (add-hook 'post-command-hook #'my/org-hide-link-on-leave nil t)
+            (message "Link revealed. Press <leader> n s to hide, or move away."))
+        (message "No link under cursor.")))))
 
-;; Bind the new Show Link command
+;; Bind the new Toggle Link command
 (evil-define-key 'normal org-mode-map
-  (kbd "<leader> n s") 'my/org-show-link-under-cursor)
+  (kbd "<leader> n s") 'my/org-toggle-link-under-cursor)
 
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
 ;; ==========================================
 (defun my/org-references-jump-replace ()
-  "Parse the line, open target file
-   replacing this window, and kill the list buffer."
+  "Parse the line, open target file replacing
+   this window, and kill the list buffer."
   (interactive)
   (let ((list-buf (current-buffer))
         (line-str (thing-at-point 'line t))
@@ -637,6 +654,156 @@ line or inside expanded content."
 (defun my/org-transclusion-remove-at-point ()
   "Remove the transclusion — works whether cursor is on the
 #+transclude: line OR inside the expanded content."
+  (interactive)
+  (if (org-transclusion-within-transclusion-p)
+      (org-transclusion-remove)
+    (when (looking-at "^#\\+transclude:")
+      (org-transclusion-remove)
+      (message "Transclusion removed"))))
+
+(use-package org-download
+  :hook ((dired-mode . org-download-enable)
+         (org-mode . org-download-enable))
+  :custom
+  (org-download-image-dir (concat org-roam-directory "/images")))
+
+(use-package org-capture
+  :ensure nil
+  :custom
+  (org-default-notes-file (concat org-roam-directory "/inbox.org"))
+  (org-capture-templates
+   '(("i" "Inbox / Fleeting Note" entry (file org-default-notes-file)
+      "* %?\n%U\n%i" :empty-lines 1)))
+  :config
+  (evil-define-key 'normal 'global
+    (kbd "<leader> n c") 'org-capture))
+
+(use-package org-appear
+  :hook (org-mode . org-appear-mode)
+  :custom
+  (org-hide-emphasis-markers t)
+  (org-appear-autoemphasis t)
+  (org-appear-autolinks nil)      ;; <-- TURNED OFF AUTO-UNFOLDING
+  (org-appear-autosubmarkers t))
+
+(use-package org-id
+  :ensure nil ; built into Emacs
+  :custom
+  (org-id-track-globally t)
+  (org-id-link-to-org-use-id 'create-if-interactive-and-no-custom-alist)
+  :config
+  (evil-define-key 'normal 'global
+    (kbd "<leader> n u") 'org-id-get-create)) ; 'u' for Unique ID
+
+;; ==========================================
+;; FULLSCREEN TAKEOVER JUMP LOGIC
+;; ==========================================
+(defun my/org-references-jump-replace ()
+  "Parse the line, open target file
+   replacing this window, and kill the list buffer."
+  (interactive)
+  (let ((list-buf (current-buffer))
+        (line-str (thing-at-point 'line t))
+        (roam-dir (expand-file-name org-roam-directory))
+        target-file target-line)
+    
+    (when (and line-str (string-match "^\\(.*?\\):\\([0-9]+\\):" line-str))
+      (setq target-file (expand-file-name (match-string 1 line-str) roam-dir)
+            target-line (string-to-number (match-string 2 line-str))))
+    
+    (if (not target-file)
+        (message "No reference found on this line.")
+      (find-file target-file)
+      (goto-char (point-min))
+      (forward-line (1- target-line))
+      (recenter)
+      (ignore-errors (kill-buffer list-buf))
+      (message "Teleported successfully."))))
+
+(defun my/org-transclusion-backlinks ()
+  "Show notes transcluding this ID. 
+Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
+  (interactive)
+  (let ((id (org-id-get)))
+    (if (not id)
+        (message "No :ID: property found in this file")
+      (let* ((search-str (concat "id:" id))
+             (roam-dir (expand-file-name org-roam-directory))
+             (grep-cmd (format "cd %s && grep -rnH --include='*.org' %s ."
+                               (shell-quote-argument roam-dir)
+                               (shell-quote-argument search-str)))
+             (output (shell-command-to-string grep-cmd))
+             (lines (split-string output "\n" t)))
+        (cond
+         ((null lines)
+          (message "No back-references found for ID: %s" id))
+         
+         ((= (length lines) 1)
+          (if (string-match "^\\(.*?\\):\\([0-9]+\\):" (car lines))
+              (let ((file (expand-file-name (match-string 1 (car lines)) roam-dir))
+                    (line (string-to-number (match-string 2 (car lines)))))
+                (find-file file)
+                (goto-char (point-min))
+                (forward-line (1- line))
+                (delete-other-windows)
+                (message "Jumped to the single reference."))
+            (message "Could not parse output: %s" (car lines))))
+         
+         (t
+          (require 'compile)
+          (let ((buf (get-buffer-create "*Org References*")))
+            (with-current-buffer buf
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (setq default-directory (file-name-as-directory roam-dir))
+                
+                (dolist (line lines)
+                  (let ((clean-line (if (string-prefix-p "./" line)
+                                        (substring line 2)
+                                      line)))
+                    (if (string-match "^\\(.*?\\):\\([0-9]+\\):\\(.*\\)$" clean-line)
+                        (let ((f-name (match-string 1 clean-line))
+                              (l-num  (match-string 2 clean-line))
+                              (text   (match-string 3 clean-line)))
+                          (insert (propertize f-name 'font-lock-face 'compilation-info)
+                                  ":"
+                                  (propertize l-num 'font-lock-face 'compilation-line-number)
+                                  ":"
+                                  text "\n"))
+                      (insert clean-line "\n"))))
+                
+                (special-mode)
+                
+                (evil-local-set-key 'normal (kbd "RET") 'my/org-references-jump-replace)
+                (evil-local-set-key 'motion (kbd "RET") 'my/org-references-jump-replace)
+                (local-set-key (kbd "RET") 'my/org-references-jump-replace)
+                (local-set-key (kbd "<return>") 'my/org-references-jump-replace)
+                
+                (goto-char (point-min))))
+            
+            (switch-to-buffer buf)
+            (delete-other-windows)
+            (message "Showing %d references. Press RET to teleport." (length lines)))))))))
+
+(defun my/org-transclusion-open-source-at-point ()
+  "Jump to the original source file
+   from #+transclude:
+   line or inside expanded content."
+  (interactive)
+  (if (org-transclusion-within-transclusion-p)
+      (org-transclusion-open-source)
+    ;; On the raw #+transclude: line
+    (save-excursion
+      (beginning-of-line)
+      (if (re-search-forward "id:\\([0-9a-fA-F-]+\\)" (line-end-position) t)
+          (let ((id (match-string 1)))
+            (org-id-goto id)
+            (message "Opened source: %s" id))
+        (message "No ID found on this line")))))
+
+(defun my/org-transclusion-remove-at-point ()
+  "Remove the transclusion — works whether cursor
+   is on the #+transclude: line OR inside the expanded content."
   (interactive)
   (if (org-transclusion-within-transclusion-p)
       (org-transclusion-remove)
