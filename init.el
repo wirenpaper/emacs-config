@@ -470,6 +470,7 @@
     (kbd "<leader> n r") 'org-transclusion-remove
     (kbd "g d") 'my/org-transclusion-open-source-at-point
     (kbd "g r") 'my/org-transclusion-backlinks
+    (kbd "g s") 'my/org-toggle-link-under-cursor    ;; <-- NEW PROPER BINDING
     (kbd "K") 'my/org-transclusion-toggle
     (kbd "g y") #'my/org-store-link-smart   ; 'y' for Yank link
     (kbd "g p") #'my/org-insert-link-clean))
@@ -541,10 +542,6 @@
             (add-hook 'post-command-hook #'my/org-hide-link-on-leave nil t)
             (message "Link revealed. Press `g s` to hide, or move away."))
         (message "No link under cursor.")))))
-
-;; Bind the new Toggle Link command
-(evil-define-key 'normal org-mode-map
-  (kbd "g s") 'my/org-toggle-link-under-cursor)
 
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
@@ -635,20 +632,38 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
             (delete-other-windows)
             (message "Showing %d references. Press RET to teleport." (length lines)))))))))
 
+;; UPDATED: Strict Exact-Link Jumping
 (defun my/org-transclusion-open-source-at-point ()
-  "Jump to the original source file from #+transclude:
-line or inside expanded content."
+  "Jump to source file from inside a transclusion, or exactly on an ID link."
   (interactive)
-  (if (org-transclusion-within-transclusion-p)
-      (org-transclusion-open-source)
-    ;; On the raw #+transclude: line
-    (save-excursion
-      (beginning-of-line)
-      (if (re-search-forward "id:\\([0-9a-fA-F-]+\\)" (line-end-position) t)
-          (let ((id (match-string 1)))
-            (org-id-goto id)
-            (message "Opened source: %s" id))
-        (message "No ID found on this line")))))
+  (let* ((context (org-element-context))
+         (type (car context)))
+    (cond
+     ;; 1. Inside an active expanded transclusion block
+     ((org-transclusion-within-transclusion-p)
+      (org-transclusion-open-source))
+      
+     ;; 2. Cursor is EXACTLY on an ID link (no more guessing)
+     ((and (eq type 'link) (string= (org-element-property :type context) "id"))
+      (let ((id (org-element-property :path context)))
+        (org-id-goto id)
+        (message "Opened source: %s" id)))
+        
+     ;; 3. ONLY scan the line if it is a `#+transclude:` keyword line
+     ((save-excursion
+        (beginning-of-line)
+        (looking-at "^[ \t]*#\\+transclude:"))
+      (save-excursion
+        (beginning-of-line)
+        (if (re-search-forward "id:\\([0-9a-fA-F-]+\\)" (line-end-position) t)
+            (let ((id (match-string 1)))
+              (org-id-goto id)
+              (message "Opened transclude source: %s" id))
+          (message "No ID link found on this transclude line."))))
+          
+     ;; 4. Otherwise, do strictly nothing.
+     (t
+      (message "No ID link exactly under cursor. Move cursor onto the link!")))))
 
 (defun my/org-transclusion-remove-at-point ()
   "Remove the transclusion — works whether cursor is on the
