@@ -492,20 +492,20 @@
    (t
     (message "Not on a transclude line or inside one"))))
 
-;; UPDATED: Smart backlinks function (Jump on 1 result, list on multiple)
+;; UPDATED: Smart, clean backlinks function
 (defun my/org-transclusion-backlinks ()
-  "From the source file, show every note that transcludes this ID.
-If there is exactly one reference, jump to it directly.
-If there are multiple, open a grep list buffer."
+  "Show notes transcluding this ID. Jumps directly if there's only 1.
+If there are multiple, opens a pure, clean list of references."
   (interactive)
   (let ((id (org-id-get)))
     (if (not id)
         (message "No :ID: property found in this file")
       (let* ((search-str (concat "id:" id))
-             ;; Fast shell command to count matches
-             (grep-cmd (format "grep -rnH --include='*.org' %s %s"
-                               (shell-quote-argument search-str)
-                               (shell-quote-argument (expand-file-name org-roam-directory))))
+             (roam-dir (expand-file-name org-roam-directory))
+             ;; We 'cd' first so grep outputs beautiful relative paths
+             (grep-cmd (format "cd %s && grep -rnH --include='*.org' %s ."
+                               (shell-quote-argument roam-dir)
+                               (shell-quote-argument search-str)))
              (output (shell-command-to-string grep-cmd))
              (lines (split-string output "\n" t)))
         (cond
@@ -516,19 +516,31 @@ If there are multiple, open a grep list buffer."
          ;; Scenario B: Exactly ONE reference found
          ((= (length lines) 1)
           (if (string-match "^\\(.*?\\):\\([0-9]+\\):" (car lines))
-              (let ((file (match-string 1 (car lines)))
+              (let ((file (expand-file-name (match-string 1 (car lines)) roam-dir))
                     (line (string-to-number (match-string 2 (car lines)))))
                 (find-file file)
                 (goto-char (point-min))
                 (forward-line (1- line))
-                (message "Jumped to the single reference in %s" (file-name-nondirectory file)))
-            ;; Fallback if regex parsing failed
-            (rgrep search-str "*.org" org-roam-directory)))
+                (message "Jumped to the single reference."))
+            (message "Could not parse output: %s" (car lines))))
          
-         ;; Scenario C: MULTIPLE references found
+         ;; Scenario C: MULTIPLE references found (Clean Buffer)
          (t
-          (rgrep search-str "*.org" org-roam-directory)
-          (message "Showing all back-references to ID: %s" id)))))))
+          (let ((buf (get-buffer-create "*Org References*")))
+            (with-current-buffer buf
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (setq default-directory (file-name-as-directory roam-dir))
+                ;; Insert ONLY the clean matching lines
+                (dolist (line lines)
+                  (let ((clean-line (if (string-prefix-p "./" line)
+                                        (substring line 2)
+                                      line)))
+                    (insert clean-line "\n")))
+                (grep-mode)
+                (goto-char (point-min))))
+            (display-buffer buf)
+            (message "Showing %d references (Press RET to jump)." (length lines)))))))))
 
 (defun my/org-transclusion-open-source-at-point ()
   "Jump to the original source file from #+transclude:
