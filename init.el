@@ -492,36 +492,62 @@
    (t
     (message "Not on a transclude line or inside one"))))
 
-;; Custom function to jump to the reference AND close the list window
+;; AGGRESSIVE JUMP AND DESTROY FUNCTION
 (defun my/org-references-jump-and-close ()
-  "Jump to the reference at point and instantly close the references list."
+  "Parse the line, violently execute the window/buffer, and jump."
   (interactive)
-  (let ((buf (current-buffer)))
-    (call-interactively 'compile-goto-error)
-    (quit-windows-on buf t))) ; Closes window and kills the buffer
+  (let ((line-str (thing-at-point 'line t))
+        (roam-dir (expand-file-name org-roam-directory))
+        target-file
+        target-line)
+    
+    ;; Parse out the file name and line number
+    (when (and line-str (string-match "^\\(.*?\\):\\([0-9]+\\):" line-str))
+      (setq target-file (expand-file-name (match-string 1 line-str) roam-dir)
+            target-line (string-to-number (match-string 2 line-str))))
+    
+    (if (not target-file)
+        (message "No reference found on this line.")
+      ;; SKULLFUCK EMACS: Absolute destruction of the popup window
+      (let ((ref-buf (current-buffer))
+            (ref-win (get-buffer-window (current-buffer))))
+        
+        ;; 1. Step out of the reference window into the main editor window
+        (other-window 1)
+        
+        ;; 2. Nuke the reference window from orbit
+        (when (window-live-p ref-win)
+          (delete-window ref-win))
+        
+        ;; 3. Wipe the buffer completely from memory
+        (ignore-errors (kill-buffer ref-buf))
+        
+        ;; 4. Force open the target file in your main window
+        (find-file target-file)
+        (goto-char (point-min))
+        (forward-line (1- target-line))
+        (recenter)
+        (message "Target acquired. Window destroyed.")))))
 
-;; UPDATED: Smart, clean backlinks function that auto-focuses the window
+;; UPDATED: Completely stripped Emacs grep-mode. Replaced with raw string buffer.
 (defun my/org-transclusion-backlinks ()
   "Show notes transcluding this ID. Jumps directly if there's only 1.
-If there are multiple, opens a clean list and moves the cursor to it."
+If there are multiple, opens a DUMB list. Pressing RET destroys it and jumps."
   (interactive)
   (let ((id (org-id-get)))
     (if (not id)
         (message "No :ID: property found in this file")
       (let* ((search-str (concat "id:" id))
              (roam-dir (expand-file-name org-roam-directory))
-             ;; We 'cd' first so grep outputs beautiful relative paths
              (grep-cmd (format "cd %s && grep -rnH --include='*.org' %s ."
                                (shell-quote-argument roam-dir)
                                (shell-quote-argument search-str)))
              (output (shell-command-to-string grep-cmd))
              (lines (split-string output "\n" t)))
         (cond
-         ;; Scenario A: No references found
          ((null lines)
           (message "No back-references found for ID: %s" id))
          
-         ;; Scenario B: Exactly ONE reference found
          ((= (length lines) 1)
           (if (string-match "^\\(.*?\\):\\([0-9]+\\):" (car lines))
               (let ((file (expand-file-name (match-string 1 (car lines)) roam-dir))
@@ -532,30 +558,34 @@ If there are multiple, opens a clean list and moves the cursor to it."
                 (message "Jumped to the single reference."))
             (message "Could not parse output: %s" (car lines))))
          
-         ;; Scenario C: MULTIPLE references found (Clean Buffer, Focus, & Jump-to-Close)
          (t
           (let ((buf (get-buffer-create "*Org References*")))
             (with-current-buffer buf
               (let ((inhibit-read-only t))
                 (erase-buffer)
                 (setq default-directory (file-name-as-directory roam-dir))
-                ;; Insert ONLY the clean matching lines
+                
+                ;; Insert clean strings ONLY
                 (dolist (line lines)
                   (let ((clean-line (if (string-prefix-p "./" line)
                                         (substring line 2)
                                       line)))
                     (insert clean-line "\n")))
-                (grep-mode)
                 
-                ;; Overwrite Enter key to use our custom "jump and close" function
+                ;; STRIP EMACS COMPILATION SMARTS. Dumb read-only mode.
+                (special-mode)
+                
+                ;; BRUTEFORCE EVERY VARIANT OF THE ENTER KEY
                 (evil-local-set-key 'normal (kbd "RET") 'my/org-references-jump-and-close)
                 (evil-local-set-key 'motion (kbd "RET") 'my/org-references-jump-and-close)
+                (evil-local-set-key 'normal (kbd "<return>") 'my/org-references-jump-and-close)
+                (evil-local-set-key 'motion (kbd "<return>") 'my/org-references-jump-and-close)
                 (local-set-key (kbd "RET") 'my/org-references-jump-and-close)
+                (local-set-key (kbd "<return>") 'my/org-references-jump-and-close)
                 
                 (goto-char (point-min))))
-            ;; pop-to-buffer auto-moves the cursor to the newly opened window
             (pop-to-buffer buf)
-            (message "Showing %d references. Press RET to jump and close." (length lines)))))))))
+            (message "Showing %d references. Press RET to violently jump and close." (length lines)))))))))
 
 (defun my/org-transclusion-open-source-at-point ()
   "Jump to the original source file from #+transclude:
