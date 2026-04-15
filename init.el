@@ -156,7 +156,7 @@
   (when (member my/font-arabic-name (font-family-list))
     (set-fontset-font t 'arabic 
                       (font-spec :family my/font-arabic-name 
-                                 ;:size 24 ; وَٱلَّذِينَ يُؤْمِنُونَ بِمَآ أُنزِلَ إِلَيْكَ وَمَآ أُنزِلَ مِن قَبْلِكَ وَبِٱلْـَٔاخِرَةِ هُمْ يُوقِنُونَ
+                                 ;:size 24
                                  :weight 'normal))) ;; <-- This blocks the semi-bold bleed-over!
 
   ;; 3. Symbols
@@ -404,7 +404,6 @@
 ;; ==========================================
 ;; 5. Setup Org-Mode Ecosystem
 ;; ==========================================
-
 (require 'org)
 
 (use-package evil-org
@@ -422,12 +421,32 @@
   (unless (file-exists-p org-roam-directory)
     (make-directory org-roam-directory))
   (org-roam-db-autosync-mode)
-  :config
+
+  ;; Custom function to delete the current roam file
+  (defun my/org-roam-delete-current-node ()
+    "Deletes the current org-roam file and kills its buffer."
+    (interactive)
+    (let ((file (buffer-file-name)))
+      (if (and file (string-prefix-p (expand-file-name org-roam-directory) file))
+          (when (y-or-n-p (format "Delete this Org-Roam node (%s)? " (file-name-nondirectory file)))
+            (delete-file file t)
+            (kill-buffer)
+            (message "Org-Roam node deleted."))
+        (message "Current buffer is not a saved file in the org-roam directory."))))
+
+  ;; Custom function to make searching for nodes case-insensitive
+  (defun my/org-roam-node-find-ignore-case ()
+    "Find an org-roam node with case-insensitive completion."
+    (interactive)
+    (let ((completion-ignore-case t))
+      (org-roam-node-find)))
+
   (evil-define-key 'normal 'global
     (kbd "<leader> n l") 'org-roam-buffer-toggle
-    (kbd "<leader> n f") 'org-roam-node-find
+    (kbd "<leader> n f") 'my/org-roam-node-find-ignore-case
     (kbd "<leader> n i") 'org-roam-node-insert
-    (kbd "<leader> n s") 'org-roam-db-sync))
+    (kbd "<leader> n s") 'org-roam-db-sync
+    (kbd "<leader> n d") 'my/org-roam-delete-current-node))
 
 (use-package org-roam-ui
   :custom
@@ -463,23 +482,21 @@
    ((org-transclusion-within-transclusion-p)
     (org-transclusion-remove)
     (message "Transclusion closed"))
-
    ;; On a #+transclude: line (even with spaces) → open it
    ((save-excursion
       (beginning-of-line)
       (looking-at "^[ \t]*#\\+transclude:"))
     (org-transclusion-add)
     (message "Transclusion opened"))
-
    ;; Fallback
    (t
     (message "Not on a transclude line or inside one"))))
 
 (defun my/org-transclusion-backlinks ()
   "From the source file, show every note that
-   transcludes this ID. Opens a grep buffer
-   with clickable links to every #+transclude
-   that points here."
+transcludes this ID. Opens a grep buffer
+with clickable links to every #+transclude
+that points here."
   (interactive)
   (let ((id (org-id-get)))
     (if (not id)
@@ -490,14 +507,14 @@
 
 (defun my/org-transclusion-open-source-at-point ()
   "Jump to the original source file from #+transclude:
-   line or inside expanded content."
+line or inside expanded content."
   (interactive)
   (if (org-transclusion-within-transclusion-p)
       (org-transclusion-open-source)
     ;; On the raw #+transclude: line
     (save-excursion
       (beginning-of-line)
-      (if (re-search-forward "id:\\([0-9a-f-]\\{36\\}\\)" (line-end-position) t)
+      (if (re-search-forward "id:\\([0-9a-fA-F-]+\\)" (line-end-position) t)
           (let ((id (match-string 1)))
             (org-id-goto id)
             (message "Opened source: %s" id))
@@ -505,7 +522,7 @@
 
 (defun my/org-transclusion-remove-at-point ()
   "Remove the transclusion — works whether cursor is on the
-   #+transclude: line OR inside the expanded content."
+#+transclude: line OR inside the expanded content."
   (interactive)
   (if (org-transclusion-within-transclusion-p)
       (org-transclusion-remove)
@@ -545,7 +562,7 @@
   (org-id-link-to-org-use-id 'create-if-interactive-and-no-custom-alist)
   :config
   (evil-define-key 'normal 'global
-    (kbd "<leader> n u") 'org-id-get-create) ; 'u' for Unique ID
+    (kbd "<leader> n u") 'org-id-get-create)) ; 'u' for Unique ID
 
   ;; ==========================================
   ;; LAZY ORG-ID UPDATER
@@ -572,7 +589,7 @@
          (message "Jump cancelled.")))))
 
   ;; Apply our lazy-loader to the core ID jump function
-  (advice-add 'org-id-goto :around #'my/lazy-org-id-update)) ;; <-- THE MISSING PARENTHESIS IS HERE!
+  (advice-add 'org-id-goto :around #'my/lazy-org-id-update) ;; <-- THE MISSING PARENTHESIS IS HERE!
 
 ;; Enable C/C++ execution in Org Babel
 (require 'ob-C)
