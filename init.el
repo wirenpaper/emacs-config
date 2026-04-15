@@ -492,10 +492,18 @@
    (t
     (message "Not on a transclude line or inside one"))))
 
-;; UPDATED: Smart, clean backlinks function
+;; Custom function to jump to the reference AND close the list window
+(defun my/org-references-jump-and-close ()
+  "Jump to the reference at point and instantly close the references list."
+  (interactive)
+  (let ((buf (current-buffer)))
+    (call-interactively 'compile-goto-error)
+    (quit-windows-on buf t))) ; Closes window and kills the buffer
+
+;; UPDATED: Smart, clean backlinks function that auto-focuses the window
 (defun my/org-transclusion-backlinks ()
   "Show notes transcluding this ID. Jumps directly if there's only 1.
-If there are multiple, opens a pure, clean list of references."
+If there are multiple, opens a clean list and moves the cursor to it."
   (interactive)
   (let ((id (org-id-get)))
     (if (not id)
@@ -524,7 +532,7 @@ If there are multiple, opens a pure, clean list of references."
                 (message "Jumped to the single reference."))
             (message "Could not parse output: %s" (car lines))))
          
-         ;; Scenario C: MULTIPLE references found (Clean Buffer)
+         ;; Scenario C: MULTIPLE references found (Clean Buffer, Focus, & Jump-to-Close)
          (t
           (let ((buf (get-buffer-create "*Org References*")))
             (with-current-buffer buf
@@ -538,9 +546,16 @@ If there are multiple, opens a pure, clean list of references."
                                       line)))
                     (insert clean-line "\n")))
                 (grep-mode)
+                
+                ;; Overwrite Enter key to use our custom "jump and close" function
+                (evil-local-set-key 'normal (kbd "RET") 'my/org-references-jump-and-close)
+                (evil-local-set-key 'motion (kbd "RET") 'my/org-references-jump-and-close)
+                (local-set-key (kbd "RET") 'my/org-references-jump-and-close)
+                
                 (goto-char (point-min))))
-            (display-buffer buf)
-            (message "Showing %d references (Press RET to jump)." (length lines)))))))))
+            ;; pop-to-buffer auto-moves the cursor to the newly opened window
+            (pop-to-buffer buf)
+            (message "Showing %d references. Press RET to jump and close." (length lines)))))))))
 
 (defun my/org-transclusion-open-source-at-point ()
   "Jump to the original source file from #+transclude:
