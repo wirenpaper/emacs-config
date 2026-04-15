@@ -546,12 +546,40 @@
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
 ;; ==========================================
+
+(defvar-local my/org-references-current-id nil
+  "Buffer-local variable storing the ID being searched in the references buffer.")
+
+(defun my/org-goto-link-column (&optional exact-id)
+  "Position cursor on the whitespace just before the link or transclude keyword.
+If EXACT-ID is provided, searches for that specific ID on the current line."
+  (let ((limit (line-end-position))
+        (found nil))
+    (if exact-id
+        (when (search-forward exact-id limit t)
+          (goto-char (match-beginning 0))
+          ;; Step back to the beginning of the transclude keyword or link syntax
+          (when (re-search-backward "\\(#\\+transclude:\\|\\[\\[id:\\|id:\\)" (line-beginning-position) t)
+            (goto-char (match-beginning 1)))
+          (setq found t))
+      ;; Fallback generic search if exact-id is unknown
+      (when (re-search-forward "\\(#\\+transclude:\\|\\[\\[id:\\|id:\\)" limit t)
+        (goto-char (match-beginning 1))
+        (setq found t)))
+    
+    (when found
+      ;; If the previous character is a space or tab, step back onto it
+      (when (and (> (point) (line-beginning-position))
+                 (memq (char-before) '(?\s ?\t)))
+        (backward-char)))))
+
 (defun my/org-references-jump-replace ()
   "Replace the window with target file, and kill list buffer."
   (interactive)
   (let ((list-buf (current-buffer))
         (line-str (thing-at-point 'line t))
         (roam-dir (expand-file-name org-roam-directory))
+        (search-id my/org-references-current-id) ;; Grab the ID we saved earlier
         target-file target-line)
     
     (when (and line-str (string-match "^\\(.*?\\):\\([0-9]+\\):" line-str))
@@ -563,6 +591,10 @@
       (find-file target-file)
       (goto-char (point-min))
       (forward-line (1- target-line))
+      
+      ;; ---> NEW: Adjust the column! <---
+      (my/org-goto-link-column search-id)
+      
       (recenter)
       (ignore-errors (kill-buffer list-buf))
       (message "Teleported successfully."))))
@@ -592,6 +624,10 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
                 (find-file file)
                 (goto-char (point-min))
                 (forward-line (1- line))
+                
+                ;; Adjust the column for the single match
+                (my/org-goto-link-column id)
+                
                 (delete-other-windows)
                 (message "Jumped to the single reference."))
             (message "Could not parse output: %s" (car lines))))
@@ -619,7 +655,11 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
                                   text "\n"))
                       (insert clean-line "\n"))))
                 
+                ;; Initialize mode FIRST
                 (special-mode)
+                
+                ;; ---> FIX: Store the ID locally AFTER special-mode clears local variables <---
+                (setq-local my/org-references-current-id id)
                 
                 (evil-local-set-key 'normal (kbd "RET") 'my/org-references-jump-replace)
                 (evil-local-set-key 'motion (kbd "RET") 'my/org-references-jump-replace)
