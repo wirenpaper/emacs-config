@@ -445,7 +445,7 @@
     (kbd "<leader> n l") 'org-roam-buffer-toggle
     (kbd "<leader> n f") 'my/org-roam-node-find-ignore-case
     (kbd "<leader> n i") 'org-roam-node-insert
-    (kbd "<leader> n s") 'org-roam-db-sync
+    (kbd "<leader> n S") 'org-roam-db-sync  ;; <-- MOVED TO SHIFT-S
     (kbd "<leader> n d") 'my/org-roam-delete-current-node))
 
 (use-package org-roam-ui
@@ -492,9 +492,49 @@
    (t
     (message "Not on a transclude line or inside one"))))
 
-;; NEW: Manual parsing for the "Fullscreen Takeover" jump
+;; ==========================================
+;; MANUAL LINK REVEAL LOGIC
+;; ==========================================
+(defvar-local my/org-manual-link-bounds nil)
+
+(defun my/org-hide-link-on-leave ()
+  "Re-hide the link when cursor moves outside its bounds."
+  (when my/org-manual-link-bounds
+    (let ((beg (car my/org-manual-link-bounds))
+          (end (cdr my/org-manual-link-bounds)))
+      (when (or (< (point) beg) (>= (point) end))
+        ;; Cursor left the link. Force Emacs to re-hide it cleanly.
+        (font-lock-flush beg end)
+        (setq my/org-manual-link-bounds nil)
+        (remove-hook 'post-command-hook #'my/org-hide-link-on-leave t)))))
+
+(defun my/org-show-link-under-cursor ()
+  "Manually unfold the link at point. It automatically folds when cursor leaves."
+  (interactive)
+  (let* ((context (org-element-context))
+         (type (car context)))
+    (if (eq type 'link)
+        (let ((beg (org-element-property :begin context))
+              (end (org-element-property :end context)))
+          ;; Strip all invisibility properties so the ID shows up
+          (with-silent-modifications
+            (remove-text-properties beg end '(invisible nil)))
+          ;; Start watching the cursor to re-hide it later
+          (setq my/org-manual-link-bounds (cons beg end))
+          (add-hook 'post-command-hook #'my/org-hide-link-on-leave nil t)
+          (message "Link revealed. It will auto-hide when you move away."))
+      (message "No link under cursor."))))
+
+;; Bind the new Show Link command
+(evil-define-key 'normal org-mode-map
+  (kbd "<leader> n s") 'my/org-show-link-under-cursor)
+
+;; ==========================================
+;; FULLSCREEN TAKEOVER JUMP LOGIC
+;; ==========================================
 (defun my/org-references-jump-replace ()
-  "Parse the line, open target file replacing this window, and kill the list buffer."
+  "Parse the line, open target file
+   replacing this window, and kill the list buffer."
   (interactive)
   (let ((list-buf (current-buffer))
         (line-str (thing-at-point 'line t))
@@ -507,17 +547,13 @@
     
     (if (not target-file)
         (message "No reference found on this line.")
-      ;; Because the list is currently fullscreen, `find-file` simply replaces
-      ;; the list with the target file in the exact same window.
       (find-file target-file)
       (goto-char (point-min))
       (forward-line (1- target-line))
       (recenter)
-      ;; Nuke the reference list buffer from memory so it doesn't linger
       (ignore-errors (kill-buffer list-buf))
       (message "Teleported successfully."))))
 
-;; UPDATED: Pristine Custom-Painted Buffer with Fullscreen Takeover
 (defun my/org-transclusion-backlinks ()
   "Show notes transcluding this ID. 
 Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
@@ -527,18 +563,15 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
         (message "No :ID: property found in this file")
       (let* ((search-str (concat "id:" id))
              (roam-dir (expand-file-name org-roam-directory))
-             ;; Native grep shell speed is instantaneous (takes ~10-50ms for 10k files)
              (grep-cmd (format "cd %s && grep -rnH --include='*.org' %s ."
                                (shell-quote-argument roam-dir)
                                (shell-quote-argument search-str)))
              (output (shell-command-to-string grep-cmd))
              (lines (split-string output "\n" t)))
         (cond
-         ;; Scenario A: No references
          ((null lines)
           (message "No back-references found for ID: %s" id))
          
-         ;; Scenario B: Exactly 1 reference (Instant Teleport)
          ((= (length lines) 1)
           (if (string-match "^\\(.*?\\):\\([0-9]+\\):" (car lines))
               (let ((file (expand-file-name (match-string 1 (car lines)) roam-dir))
@@ -550,16 +583,14 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
                 (message "Jumped to the single reference."))
             (message "Could not parse output: %s" (car lines))))
          
-         ;; Scenario C: 2+ references (Pristine List Takeover)
          (t
-          (require 'compile) ; Load Emacs's built-in colors
+          (require 'compile)
           (let ((buf (get-buffer-create "*Org References*")))
             (with-current-buffer buf
               (let ((inhibit-read-only t))
                 (erase-buffer)
                 (setq default-directory (file-name-as-directory roam-dir))
                 
-                ;; Insert and MANUALLY PAINT colors so there is absolutely ZERO noise
                 (dolist (line lines)
                   (let ((clean-line (if (string-prefix-p "./" line)
                                         (substring line 2)
@@ -568,7 +599,6 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
                         (let ((f-name (match-string 1 clean-line))
                               (l-num  (match-string 2 clean-line))
                               (text   (match-string 3 clean-line)))
-                          ;; Apply Green to file, Yellow to line number
                           (insert (propertize f-name 'font-lock-face 'compilation-info)
                                   ":"
                                   (propertize l-num 'font-lock-face 'compilation-line-number)
@@ -576,10 +606,8 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
                                   text "\n"))
                       (insert clean-line "\n"))))
                 
-                ;; Turn into a dumb read-only buffer
                 (special-mode)
                 
-                ;; Bind our flawless takeover jump function
                 (evil-local-set-key 'normal (kbd "RET") 'my/org-references-jump-replace)
                 (evil-local-set-key 'motion (kbd "RET") 'my/org-references-jump-replace)
                 (local-set-key (kbd "RET") 'my/org-references-jump-replace)
@@ -587,7 +615,6 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
                 
                 (goto-char (point-min))))
             
-            ;; Take over the entire screen with the clean buffer
             (switch-to-buffer buf)
             (delete-other-windows)
             (message "Showing %d references. Press RET to teleport." (length lines)))))))))
@@ -639,7 +666,7 @@ line or inside expanded content."
   :custom
   (org-hide-emphasis-markers t)
   (org-appear-autoemphasis t)
-  (org-appear-autolinks t)
+  (org-appear-autolinks nil)      ;; <-- TURNED OFF AUTO-UNFOLDING
   (org-appear-autosubmarkers t))
 
 (use-package org-id
