@@ -547,90 +547,95 @@
 ;; JUMP LOGIC TO AND BACK FROM TANGLED FILE
 ;; ==========================================
 
-(defun my/jump-back-to-org-no-split ()
-  "Jump from tangled file back to the exact row and column in the Org file."
+(defun my/org-tangle-jump-toggle ()
+  "Toggle between an Org source block and its tangled file.
+Maintains exact row and column persistence, with no window splitting."
   (interactive)
-  (let ((current-win (selected-window))
-        (current-col (current-column))        ;; <-- Capture horizontal position
-        (current-line (line-number-at-pos))   ;; <-- Capture current row
-        org-file block-name comment-line)
+  (cond
+   ;; =======================================================
+   ;; CASE 1: We are in Org Mode -> Jump to Tangled File
+   ;; =======================================================
+   ((derived-mode-p 'org-mode)
+    (unless (org-in-src-block-p)
+      (user-error "Not inside an Org source block!"))
     
-    ;; 1. Search backward to find the Org breadcrumb comment
-    (save-excursion
-      (if (re-search-backward "\\[\\[file:\\(.*?\\)::\\(.*?\\)\\]\\[" nil t)
-          (setq org-file (match-string 1)
-                block-name (match-string 2)
-                comment-line (line-number-at-pos)) ;; <-- Capture comment row
-        (user-error "Could not find Org breadcrumb link above cursor!")))
-        
-    ;; Math: How far down from the breadcrumb comment were we?
-    (let* ((line-offset (- current-line comment-line))
-           (org-file-path (expand-file-name org-file (file-name-directory (buffer-file-name)))))
+    (let* ((info (org-babel-get-src-block-info 'light))
+           (tangle-target (cdr (assq :tangle (nth 2 info))))
+           (block-name (nth 4 info))
            
-      (unless (file-exists-p org-file-path)
-        (user-error "Org file '%s' does not exist." org-file-path))
+           ;; Capture exact placement
+           (current-col (current-column))
+           (current-line (line-number-at-pos))
+           (src-head-pos (org-babel-where-is-src-block-head))
+           (head-line (save-excursion 
+                        (goto-char src-head-pos) 
+                        (line-number-at-pos)))
+           (line-offset (- current-line head-line)))
+      
+      (unless tangle-target
+        (user-error "Not in a source block or :tangle is not set"))
         
-      ;; 2. Load silently and force it into the exact current window
-      (let ((buf (find-file-noselect org-file-path)))
-        (set-window-buffer current-win buf)
-        (select-window current-win)
-        (set-buffer buf)
+      (let ((tangle-file (expand-file-name tangle-target)))
+        (unless (file-exists-p tangle-file)
+          (user-error "Tangled file '%s' does not exist." tangle-file))
         
-        ;; 3. Find the block in the Org file
+        ;; Open the file
+        (find-file tangle-file)
         (goto-char (point-min))
-        (let ((case-fold-search t))
-          (if (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
-              (progn
-                ;; --- 4. APPLY ROW AND COLUMN OFFSET ---
-                ;; We add 1 to the offset to account for the `#+begin_src` line 
-                ;; that exists in Org but doesn't exist in the C++ file.
-                (beginning-of-line)
-                (forward-line (1+ line-offset)) 
-                (move-to-column current-col) ;; Snap to exact column!
-                (recenter))
-            (message "Could not find block '%s' in %s" block-name org-file)))))))
+        
+        (if block-name
+            (let ((regex (format "\\[\\[file:.*::%s\\]\\[%s\\]\\]" block-name block-name)))
+              (if (re-search-forward regex nil t)
+                  (progn
+                    (beginning-of-line)         
+                    (forward-line line-offset)
+                    (move-to-column current-col)
+                    (recenter))                 
+                (message "Could not find block '%s' in tangled file." block-name)))
+          (message "Block has no #+name.")))))
 
-(global-set-key (kbd "C-c j") 'my/jump-back-to-org-no-split)
-
-(defun my/org-babel-jump-to-tangle-file ()
-  "Jump from an Org source block to the exact row and column in the tangled file."
-  (interactive)
-  (let* ((info (org-babel-get-src-block-info 'light))
-         (tangle-target (cdr (assq :tangle (nth 2 info))))
-         (block-name (nth 4 info))
-         
-         ;; --- 1. CAPTURE ROW AND COLUMN ---
-         (current-col (current-column))       ;; <-- Capture horizontal position
-         (current-line (line-number-at-pos))
-         (src-head-pos (org-babel-where-is-src-block-head))
-         (head-line (save-excursion 
-                      (goto-char src-head-pos) 
-                      (line-number-at-pos)))
-         (line-offset (- current-line head-line)))
-    
-    (unless tangle-target
-      (user-error "Not in a source block or :tangle is not set"))
+   ;; =======================================================
+   ;; CASE 2: We are in a Tangled File -> Jump to Org
+   ;; =======================================================
+   (t
+    (let ((current-win (selected-window))
+          (current-col (current-column))
+          (current-line (line-number-at-pos))
+          org-file block-name comment-line)
       
-    (let ((tangle-file (expand-file-name tangle-target)))
-      (unless (file-exists-p tangle-file)
-        (user-error "Tangled file '%s' does not exist." tangle-file))
-      
-      (find-file tangle-file)
-      (goto-char (point-min))
-      
-      (if block-name
-          (let ((regex (format "\\[\\[file:.*::%s\\]\\[%s\\]\\]" block-name block-name)))
-            (if (re-search-forward regex nil t)
+      ;; 1. Search backward to find the Org breadcrumb comment
+      (save-excursion
+        (if (re-search-backward "\\[\\[file:\\(.*?\\)::\\(.*?\\)\\]\\[" nil t)
+            (setq org-file (match-string 1)
+                  block-name (match-string 2)
+                  comment-line (line-number-at-pos))
+          (user-error "Could not find Org breadcrumb link above cursor!")))
+          
+      (let* ((line-offset (- current-line comment-line))
+             (org-file-path (expand-file-name org-file (file-name-directory (buffer-file-name)))))
+             
+        (unless (file-exists-p org-file-path)
+          (user-error "Org file '%s' does not exist." org-file-path))
+          
+        ;; 2. Load silently and force it into the exact current window (NO SPLITS)
+        (let ((buf (find-file-noselect org-file-path)))
+          (set-window-buffer current-win buf)
+          (select-window current-win)
+          (set-buffer buf)
+          
+          ;; 3. Find the block in the Org file
+          (goto-char (point-min))
+          (let ((case-fold-search t))
+            (if (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
                 (progn
-                  ;; --- 2. APPLY ROW AND COLUMN OFFSET ---
-                  (beginning-of-line)         
-                  (forward-line line-offset)   ;; Drop down to exact row
-                  (move-to-column current-col) ;; Snap to exact column!
-                  (recenter))                 
-              (message "Could not find block '%s' in tangled file." block-name)))
-        (message "Block has no #+name.")))))
+                  (beginning-of-line)
+                  (forward-line (1+ line-offset)) 
+                  (move-to-column current-col)
+                  (recenter))
+              (message "Could not find block '%s' in %s" block-name org-file)))))))))
 
-(global-set-key (kbd "C-c t") 'my/org-babel-jump-to-tangle-file)
+;; One binding to rule them all:
+(global-set-key (kbd "C-c j") 'my/org-tangle-jump-toggle)
 
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
