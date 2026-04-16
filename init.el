@@ -485,7 +485,7 @@
          
     (cond
      ;; =======================================================
-     ;; 1. Inside an expanded block -> Close it!
+     ;; 1. Inside an expanded block -> Close it & TELEPORT BACK!
      ;; =======================================================
      (in-transclusion
       (org-transclusion-remove)
@@ -493,13 +493,20 @@
       (when (and (not (bobp))
                  (get-text-property (1- (point)) 'my-inline-preview))
         
-        ;; REMOVE RED HIGHLIGHT: Search the line above and remove the red color
-        (save-excursion
-          (forward-line -1)
-          (remove-overlays (line-beginning-position) (line-end-position) 'my-active-link-preview t))
+        (let ((jump-pos nil))
+          ;; Find the red homing beacon on the line above
+          (dolist (ov (overlays-in (line-beginning-position 0) (line-end-position 0)))
+            (when (overlay-get ov 'my-active-link-preview)
+              ;; Save the exact coordinate of the link, then destroy the red color
+              (setq jump-pos (overlay-start ov))
+              (delete-overlay ov)))
+              
+          ;; Delete the temporary transclude line and newline
+          (delete-region (1- (point)) (line-end-position))
           
-        ;; Delete the temporary transclude line and newline
-        (delete-region (1- (point)) (line-end-position)))
+          ;; Teleport the cursor exactly back to the link!
+          (when jump-pos
+            (goto-char jump-pos))))
       (message "Transclusion closed"))
       
      ;; =======================================================
@@ -524,7 +531,7 @@
           (when (get-text-property (point) 'my-inline-preview)
             (setq closed-temp-p t)
             
-            ;; REMOVE RED HIGHLIGHT: We are closing the preview from the link itself
+            ;; REMOVE RED HIGHLIGHT: We are closing the preview directly from the link
             (remove-overlays (line-beginning-position) (line-end-position) 'my-active-link-preview t)
             
             (forward-char 1)
@@ -538,7 +545,7 @@
           ;; Otherwise, create and open it
           (let ((link-str (buffer-substring-no-properties beg end)))
             
-            ;; TURN LINK RED: Create a visual overlay on the link text
+            ;; TURN LINK RED: Create the visual homing beacon
             (let ((ov (make-overlay beg end)))
               (overlay-put ov 'face '(:foreground "red" :weight bold))
               (overlay-put ov 'my-active-link-preview t))
@@ -549,8 +556,8 @@
                 (insert "\n")
                 (put-text-property insert-pos (point) 'my-inline-preview t)
                 
-                ;; ADD `:only-contents t` to hide the heading line!
-                (insert "#+transclude: " link-str " :only-contents t")
+                ;; REMOVED :only-contents t -> The Org heading will now be visible again!
+                (insert "#+transclude: " link-str)
                 
                 (goto-char (1+ insert-pos))
                 (condition-case err
