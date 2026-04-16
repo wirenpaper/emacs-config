@@ -585,33 +585,43 @@ Completely bypasses Org's internal link engine to guarantee NO SPLITTING."
 (global-set-key (kbd "C-c j") 'my/jump-back-to-org-no-split)
 
 (defun my/org-babel-jump-to-tangle-file ()
-  "Jump from an Org source block to the tangled file and place point at the block."
+  "Jump from an Org source block to the exact same row in the tangled file."
   (interactive)
   (let* ((info (org-babel-get-src-block-info 'light))
          (tangle-target (cdr (assq :tangle (nth 2 info))))
-         (block-name (nth 4 info)))
+         (block-name (nth 4 info))
+         
+         ;; --- 1. CALCULATE ROW OFFSET ---
+         (current-line (line-number-at-pos))
+         ;; Find exactly where the #+begin_src line is
+         (src-head-pos (org-babel-where-is-src-block-head))
+         ;; Convert that position into a line number
+         (head-line (save-excursion 
+                      (goto-char src-head-pos) 
+                      (line-number-at-pos)))
+         ;; The math: How many lines down from #+begin_src are we?
+         (line-offset (- current-line head-line)))
     
-    ;; 1. Check if we are in a block
     (unless tangle-target
       (user-error "Not in a source block or :tangle is not set"))
       
-    ;; 2. Determine target file path
     (let ((tangle-file (expand-file-name tangle-target)))
       (unless (file-exists-p tangle-file)
-        (user-error "Tangled file '%s' does not exist. Did you run `org-babel-tangle`?" tangle-file))
+        (user-error "Tangled file '%s' does not exist." tangle-file))
       
-      ;; 3. Open the tangled file
       (find-file tangle-file)
       (goto-char (point-min))
       
-      ;; 4. Search for the Org-generated comment link
       (if block-name
-          ;; Regex looks for: [[file:any-path::block-name][block-name]]
           (let ((regex (format "\\[\\[file:.*::%s\\]\\[%s\\]\\]" block-name block-name)))
             (if (re-search-forward regex nil t)
-                (forward-line 1) ; Move cursor just below the comment
+                (progn
+                  ;; --- 2. APPLY ROW OFFSET ---
+                  (beginning-of-line)         ;; Snap to start of the // [[file...]] comment
+                  (forward-line line-offset)  ;; Jump down by the exact offset amount!
+                  (recenter))                 ;; Center the screen
               (message "Could not find block '%s' in tangled file." block-name)))
-        (message "Block has no #+name. Opened file, but couldn't jump to a specific location.")))))
+        (message "Block has no #+name.")))))
 
 ;; Your keybinding will now work:
 (global-set-key (kbd "C-c t") 'my/org-babel-jump-to-tangle-file)
