@@ -230,6 +230,36 @@ Fetches workspaces from SQLite and sorts them by closest path proximity."
     (let ((pcomplete-sort-function nil))
       (pcomplete-here sorted))))
 
+(defun my/find-anchor ()
+  "Find the nearest parent directory that is a registered workspace and anchor to it."
+  (interactive)
+  (let* ((start-dir (if buffer-file-name
+                        (file-name-directory (buffer-file-name))
+                      default-directory))
+         ;; Ensure the path has a trailing slash for consistent matching
+         (current (expand-file-name (file-name-as-directory start-dir)))
+         ;; Grab all unique workspaces currently in the database
+         (known-workspaces (mapcar (lambda (row) 
+                                     (expand-file-name (file-name-as-directory (car row))))
+                                   (sqlite-select my/sd-db "SELECT DISTINCT workspace FROM speed_dial")))
+         (found nil))
+    
+    ;; Walk up the directory tree
+    (while (and current (not found))
+      (if (member current known-workspaces)
+          (setq found current)
+        ;; Move up one directory level
+        (let ((parent (file-name-directory (directory-file-name current))))
+          (if (string= current parent)
+              (setq current nil) ;; Stop if we hit the file system root ("/")
+            (setq current parent)))))
+            
+    (if found
+        (progn
+          (my/lock-workspace-to-dir found)
+          (message "Anchored to or nearest parent workspace: %s" found))
+      (message "No known workspace found in the parent directories!"))))
+
 ;; --- THE CORFU / CAPF SORTING SHIELD ---
 (defun my/sd-pcomplete-sort-override (orig-fn &rest args)
   "Force Corfu/Capf to respect proximity sorting for the `anchor` Eshell command."
@@ -1105,6 +1135,7 @@ _v_: %s(my/sd-name 'left 8)  _/_: %s(my/sd-name 'right 8)  _q_: Quit HUD     _I_
 
 (evil-ex-define-cmd "command" 'my/speed-dial-command-mode)
 (evil-ex-define-cmd "menu" 'my/speed-dial-menu-mode)
+(evil-ex-define-cmd "find-anchor" 'my/find-anchor)
 
 (defun my/jump-to-inline-mark (char)
   (interactive "c")
