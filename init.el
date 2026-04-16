@@ -475,6 +475,27 @@
     (kbd "g y") #'my/org-store-link-smart   ; 'y' for Yank link
     (kbd "g p") #'my/org-insert-link-clean))
 
+(defun my/org-transclusion-cleanup-ephemera ()
+  "Garbage collector: sweeps and removes temporary transclusions before saving."
+  (let ((was-modified (buffer-modified-p))
+        (found-any nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (text-property-search-forward 'my-inline-preview t t)
+        (setq found-any t)
+        (beginning-of-line)
+        (when (org-transclusion-within-transclusion-p)
+          (org-transclusion-remove))
+        (delete-region (1- (point)) (line-end-position))))
+    (when found-any
+      (remove-overlays (point-min) (point-max) 'my-active-link-preview t)
+      ;; Don't let the cleanup itself mark the buffer as modified
+      (set-buffer-modified-p was-modified))))
+
+;; Run the garbage collector right before saving, or if Emacs kills the buffer
+(add-hook 'before-save-hook #'my/org-transclusion-cleanup-ephemera)
+(add-hook 'kill-buffer-hook #'my/org-transclusion-cleanup-ephemera)
+
 (defun my/org-transclusion-toggle ()
   "Smart K toggle. Opens blocks normally, or
    creates temporary vanishing previews for inline links."
@@ -493,18 +514,19 @@
       (when (and (not (bobp))
                  (get-text-property (1- (point)) 'my-inline-preview))
         
-        (let ((jump-pos nil))
-          ;; Find the red homing beacon on the line above
+        (let ((jump-pos nil)
+              (was-modified (buffer-modified-p)))
+          ;; Find the red homing beacon
           (dolist (ov (overlays-in (line-beginning-position 0) (line-end-position 0)))
             (when (overlay-get ov 'my-active-link-preview)
-              ;; Save the exact coordinate of the link, then destroy the red color
               (setq jump-pos (overlay-start ov))
               (delete-overlay ov)))
               
-          ;; Delete the temporary transclude line and newline
+          ;; Delete the temporary transclude line and restore unmodified state
           (delete-region (1- (point)) (line-end-position))
+          (set-buffer-modified-p was-modified)
           
-          ;; Teleport the cursor exactly back to the link!
+          ;; Teleport!
           (when jump-pos
             (goto-char jump-pos))))
       (message "Transclusion closed"))
@@ -531,13 +553,15 @@
           (when (get-text-property (point) 'my-inline-preview)
             (setq closed-temp-p t)
             
-            ;; REMOVE RED HIGHLIGHT: We are closing the preview directly from the link
             (remove-overlays (line-beginning-position) (line-end-position) 'my-active-link-preview t)
             
             (forward-char 1)
             (when (org-transclusion-within-transclusion-p)
               (org-transclusion-remove))
-            (delete-region (1- (line-beginning-position)) (line-end-position))))
+              
+            (let ((was-modified (buffer-modified-p)))
+              (delete-region (1- (line-beginning-position)) (line-end-position))
+              (set-buffer-modified-p was-modified))))
               
         (if closed-temp-p
             (message "Inline preview closed")
@@ -545,19 +569,19 @@
           ;; Otherwise, create and open it
           (let ((link-str (buffer-substring-no-properties beg end)))
             
-            ;; TURN LINK RED: Create the visual homing beacon
+            ;; TURN LINK RED
             (let ((ov (make-overlay beg end)))
               (overlay-put ov 'face '(:foreground "red" :weight bold))
               (overlay-put ov 'my-active-link-preview t))
               
             (save-excursion
               (end-of-line)
-              (let ((insert-pos (point)))
-                (insert "\n")
-                (put-text-property insert-pos (point) 'my-inline-preview t)
+              (let ((insert-pos (point))
+                    (was-modified (buffer-modified-p)))
                 
-                ;; REMOVED :only-contents t -> The Org heading will now be visible again!
-                (insert "#+transclude: " link-str)
+                ;; Insert normally so Org sees it, but tag it for the garbage collector
+                (insert "\n#+transclude: " link-str)
+                (put-text-property insert-pos (point) 'my-inline-preview t)
                 
                 (goto-char (1+ insert-pos))
                 (condition-case err
@@ -565,10 +589,12 @@
                       (org-transclusion-add)
                       (message "Inline preview opened"))
                   (error
-                   ;; If it fails, clean up the text and the red color immediately
                    (delete-region insert-pos (line-end-position))
                    (remove-overlays beg end 'my-active-link-preview t)
-                   (message "Could not transclude link: %s" (error-message-string err))))))))))
+                   (message "Could not transclude link: %s" (error-message-string err))))
+                   
+                ;; Instantly revert the buffer's "modified" status so Emacs doesn't ask you to save
+                (set-buffer-modified-p was-modified)))))))
 
      ;; =======================================================
      ;; 4. Fallback
