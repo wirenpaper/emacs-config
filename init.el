@@ -476,22 +476,89 @@
     (kbd "g p") #'my/org-insert-link-clean))
 
 (defun my/org-transclusion-toggle ()
-  "K = true toggle. Works on raw #+transclude: line OR inside expanded content."
+  "Smart K toggle. Opens blocks normally, or creates
+   temporary vanishing previews for inline links."
   (interactive)
-  (cond
-   ;; Already inside expanded transclusion → close it
-   ((org-transclusion-within-transclusion-p)
-    (org-transclusion-remove)
-    (message "Transclusion closed"))
-   ;; On a #+transclude: line (even with spaces) → open it
-   ((save-excursion
+  (let* ((context (org-element-context))
+         (type (car context))
+         (in-transclusion (org-transclusion-within-transclusion-p)))
+         
+    (cond
+     ;; =======================================================
+     ;; 1. Inside an expanded block -> Close it!
+     ;; =======================================================
+     (in-transclusion
+      (org-transclusion-remove)
+      ;; Step back to the exact beginning of the line
       (beginning-of-line)
-      (looking-at "^[ \t]*#\\+transclude:"))
-    (org-transclusion-add)
-    (message "Transclusion opened"))
-   ;; Fallback
-   (t
-    (message "Not on a transclude line or inside one"))))
+      ;; Check if the newline right before this line has our secret signature
+      (when (and (not (bobp))
+                 (get-text-property (1- (point)) 'my-inline-preview))
+        ;; It is a temporary preview! Delete the newline and the keyword line.
+        (delete-region (1- (point)) (line-end-position)))
+      (message "Transclusion closed"))
+      
+     ;; =======================================================
+     ;; 2. On a hard-coded `#+transclude:` line -> Open normally
+     ;; =======================================================
+     ((save-excursion
+        (beginning-of-line)
+        (looking-at "^[ \t]*#\\+transclude:"))
+      (org-transclusion-add)
+      (message "Transclusion opened"))
+
+     ;; =======================================================
+     ;; 3. On an inline link -> Toggle Temporary Preview Below!
+     ;; =======================================================
+     ((eq type 'link)
+      (let ((closed-temp-p nil))
+        (save-excursion
+          (end-of-line)
+          ;; The character right at the end of the sentence is the newline.
+          ;; Check if it possesses our secret digital signature!
+          (when (get-text-property (point) 'my-inline-preview)
+            (setq closed-temp-p t)
+            ;; Step past the newline onto the keyword line
+            (forward-char 1)
+            (when (org-transclusion-within-transclusion-p)
+              (org-transclusion-remove))
+            ;; Delete the tagged newline and the keyword
+            (delete-region (1- (line-beginning-position)) (line-end-position))))
+              
+        (if closed-temp-p
+            (message "Inline preview closed")
+          
+          ;; Otherwise, create and open it
+          (let* ((beg (org-element-property :begin context))
+                 (end (org-element-property :end context))
+                 ;; Grab the exact raw link
+                 (link-str (buffer-substring-no-properties beg end)))
+            (save-excursion
+              (end-of-line)
+              (let ((insert-pos (point)))
+                ;; Drop to a new line
+                (insert "\n")
+                ;; Secretly sign the newline character we just created
+                (put-text-property insert-pos (point) 'my-inline-preview t)
+                ;; Insert the keyword
+                (insert "#+transclude: " link-str)
+                
+                ;; Move onto the newly created line and trigger expansion
+                (goto-char (1+ insert-pos))
+                (condition-case err
+                    (progn
+                      (org-transclusion-add)
+                      (message "Inline preview opened"))
+                  (error
+                   ;; If the link is invalid, clean up immediately
+                   (delete-region insert-pos (line-end-position))
+                   (message "Could not transclude link: %s" (error-message-string err))))))))))
+
+     ;; =======================================================
+     ;; 4. Fallback
+     ;; =======================================================
+     (t
+      (message "Not on a transclude line, link, or inside one!")))))
 
 ;; ==========================================
 ;; MANUAL LINK REVEAL (TOGGLE) LOGIC
@@ -783,10 +850,10 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
         (org-id-goto id)
         (message "Opened source: %s" id)))
         
-     ;; 3. ONLY scan the line if it is a `#+transclude:` keyword line
+     ;; 3. Scan the line if it has a `#+transclude:` keyword ANYWHERE
      ((save-excursion
         (beginning-of-line)
-        (looking-at "^[ \t]*#\\+transclude:"))
+        (re-search-forward "#\\+transclude:" (line-end-position) t))
       (save-excursion
         (beginning-of-line)
         (if (re-search-forward "id:\\([0-9a-fA-F-]+\\)" (line-end-position) t)
@@ -800,13 +867,18 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
       (message "No ID link exactly under cursor. Move cursor onto the link!")))))
 
 (defun my/org-transclusion-remove-at-point ()
-  "Remove the transclusion — works whether cursor is on the
-#+transclude: line OR inside the expanded content."
+  "Remove the transclusion — works whether
+   cursor is inline OR inside the expanded content."
   (interactive)
   (if (org-transclusion-within-transclusion-p)
       (org-transclusion-remove)
-    (when (looking-at "^#\\+transclude:")
-      (org-transclusion-remove)
+    (when (save-excursion
+            (beginning-of-line)
+            (re-search-forward "#\\+transclude:" (line-end-position) t))
+      (save-excursion
+        (beginning-of-line)
+        (re-search-forward "#\\+transclude:[ \t]*" (line-end-position) t)
+        (org-transclusion-remove))
       (message "Transclusion removed"))))
 
 (use-package org-download
