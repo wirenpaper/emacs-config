@@ -635,7 +635,7 @@ Maintains exact row and column persistence, with no window splitting."
               (message "Could not find block '%s' in %s" block-name org-file)))))))))
 
 ;; One binding to rule them all:
-(global-set-key (kbd "C-c j") 'my/org-tangle-jump-toggle)
+(evil-define-key 'normal 'global (kbd "g m") 'my/org-tangle-jump-toggle)
 
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
