@@ -547,34 +547,42 @@
 ;; JUMP LOGIC TO AND BACK FROM TANGLED FILE
 ;; ==========================================
 
-;;(defun my-org-jump-exact-line-and-column ()
-;;  "Jump from a tangled file to the exact line and column in the Org file."
-;;  (interactive)
-;;  (let* ((current-line (line-number-at-pos))
-;;         (current-col (current-column))  ;; <-- 1. CAPTURE EXACT COLUMN
-;;         ;; Find the Org tracking link above our cursor
-;;         (link-pos (save-excursion
-;;                     (re-search-backward "\\[\\[file:.*\\]\\]" nil t)))
-;;         (comment-line (if link-pos
-;;                           (save-excursion
-;;                             (goto-char link-pos)
-;;                             (line-number-at-pos))
-;;                         nil)))
-;;    (if (not comment-line)
-;;        (message "No Org tracking link found above this line!")
-;;      (let ((offset (- current-line comment-line)))
-;;        ;; Jump to the general block (built-in behavior)
-;;        (org-babel-tangle-jump-to-org)
-;;        ;; Move cursor down to the actual start of the code block
-;;        (re-search-forward "#\\+begin_src" nil t)
-;;        ;; Jump down by the exact line offset amount
-;;        (forward-line offset)
-;;        ;; Move horizontally to the exact column!
-;;        (move-to-column current-col)     ;; <-- 2. APPLY EXACT COLUMN
-;;        ;; Center the screen on the cursor
-;;        (recenter)))))
+(defun my/jump-back-to-org-no-split ()
+  "Jump from tangled file back to the Org file.
+Completely bypasses Org's internal link engine to guarantee NO SPLITTING."
+  (interactive)
+  (let ((current-win (selected-window))
+        org-file block-name)
+    
+    ;; 1. Search backward to find the Org breadcrumb comment
+    (save-excursion
+      ;; Looks for: [[file:main.org::system-libraries][
+      (if (re-search-backward "\\[\\[file:\\(.*?\\)::\\(.*?\\)\\]\\[" nil t)
+          (setq org-file (match-string 1)
+                block-name (match-string 2))
+        (user-error "Could not find Org breadcrumb link above cursor!")))
+        
+    ;; 2. Resolve the file path
+    (let ((org-file-path (expand-file-name org-file (file-name-directory (buffer-file-name)))))
+      (unless (file-exists-p org-file-path)
+        (user-error "Org file '%s' does not exist." org-file-path))
+        
+      ;; 3. THE FIX: Load silently and force it into the exact current window
+      (let ((buf (find-file-noselect org-file-path)))
+        (set-window-buffer current-win buf)
+        (select-window current-win)
+        (set-buffer buf)
+        
+        ;; 4. Find the block in the Org file
+        (goto-char (point-min))
+        (let ((case-fold-search t)) ;; Ignore case for #+NAME:
+          (if (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
+              (progn
+                (forward-line 1) ;; Drop cursor inside the block
+                (recenter))      ;; Center the screen
+            (message "Could not find block '%s' in %s" block-name org-file)))))))
 
-(global-set-key (kbd "C-c j") 'org-babel-tangle-jump-to-org)
+(global-set-key (kbd "C-c j") 'my/jump-back-to-org-no-split)
 
 (defun my/org-babel-jump-to-tangle-file ()
   "Jump from an Org source block to the tangled file and place point at the block."
