@@ -476,8 +476,8 @@
     (kbd "g p") #'my/org-insert-link-clean))
 
 (defun my/org-transclusion-toggle ()
-  "Smart K toggle. Opens blocks normally, or creates
-   temporary vanishing previews for inline links."
+  "Smart K toggle. Opens blocks normally, or
+   creates temporary vanishing previews for inline links."
   (interactive)
   (let* ((context (org-element-context))
          (type (car context))
@@ -489,12 +489,16 @@
      ;; =======================================================
      (in-transclusion
       (org-transclusion-remove)
-      ;; Step back to the exact beginning of the line
       (beginning-of-line)
-      ;; Check if the newline right before this line has our secret signature
       (when (and (not (bobp))
                  (get-text-property (1- (point)) 'my-inline-preview))
-        ;; It is a temporary preview! Delete the newline and the keyword line.
+        
+        ;; REMOVE RED HIGHLIGHT: Search the line above and remove the red color
+        (save-excursion
+          (forward-line -1)
+          (remove-overlays (line-beginning-position) (line-end-position) 'my-active-link-preview t))
+          
+        ;; Delete the temporary transclude line and newline
         (delete-region (1- (point)) (line-end-position)))
       (message "Transclusion closed"))
       
@@ -511,47 +515,52 @@
      ;; 3. On an inline link -> Toggle Temporary Preview Below!
      ;; =======================================================
      ((eq type 'link)
-      (let ((closed-temp-p nil))
+      (let ((closed-temp-p nil)
+            (beg (org-element-property :begin context))
+            (end (org-element-property :end context)))
+            
         (save-excursion
           (end-of-line)
-          ;; The character right at the end of the sentence is the newline.
-          ;; Check if it possesses our secret digital signature!
           (when (get-text-property (point) 'my-inline-preview)
             (setq closed-temp-p t)
-            ;; Step past the newline onto the keyword line
+            
+            ;; REMOVE RED HIGHLIGHT: We are closing the preview from the link itself
+            (remove-overlays (line-beginning-position) (line-end-position) 'my-active-link-preview t)
+            
             (forward-char 1)
             (when (org-transclusion-within-transclusion-p)
               (org-transclusion-remove))
-            ;; Delete the tagged newline and the keyword
             (delete-region (1- (line-beginning-position)) (line-end-position))))
               
         (if closed-temp-p
             (message "Inline preview closed")
           
           ;; Otherwise, create and open it
-          (let* ((beg (org-element-property :begin context))
-                 (end (org-element-property :end context))
-                 ;; Grab the exact raw link
-                 (link-str (buffer-substring-no-properties beg end)))
+          (let ((link-str (buffer-substring-no-properties beg end)))
+            
+            ;; TURN LINK RED: Create a visual overlay on the link text
+            (let ((ov (make-overlay beg end)))
+              (overlay-put ov 'face '(:foreground "red" :weight bold))
+              (overlay-put ov 'my-active-link-preview t))
+              
             (save-excursion
               (end-of-line)
               (let ((insert-pos (point)))
-                ;; Drop to a new line
                 (insert "\n")
-                ;; Secretly sign the newline character we just created
                 (put-text-property insert-pos (point) 'my-inline-preview t)
-                ;; Insert the keyword
-                (insert "#+transclude: " link-str)
                 
-                ;; Move onto the newly created line and trigger expansion
+                ;; ADD `:only-contents t` to hide the heading line!
+                (insert "#+transclude: " link-str " :only-contents t")
+                
                 (goto-char (1+ insert-pos))
                 (condition-case err
                     (progn
                       (org-transclusion-add)
                       (message "Inline preview opened"))
                   (error
-                   ;; If the link is invalid, clean up immediately
+                   ;; If it fails, clean up the text and the red color immediately
                    (delete-region insert-pos (line-end-position))
+                   (remove-overlays beg end 'my-active-link-preview t)
                    (message "Could not transclude link: %s" (error-message-string err))))))))))
 
      ;; =======================================================
