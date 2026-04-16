@@ -548,58 +548,64 @@
 ;; ==========================================
 
 (defun my/jump-back-to-org-no-split ()
-  "Jump from tangled file back to the Org file.
-Completely bypasses Org's internal link engine to guarantee NO SPLITTING."
+  "Jump from tangled file back to the exact row and column in the Org file."
   (interactive)
   (let ((current-win (selected-window))
-        org-file block-name)
+        (current-col (current-column))        ;; <-- Capture horizontal position
+        (current-line (line-number-at-pos))   ;; <-- Capture current row
+        org-file block-name comment-line)
     
     ;; 1. Search backward to find the Org breadcrumb comment
     (save-excursion
-      ;; Looks for: [[file:main.org::system-libraries][
       (if (re-search-backward "\\[\\[file:\\(.*?\\)::\\(.*?\\)\\]\\[" nil t)
           (setq org-file (match-string 1)
-                block-name (match-string 2))
+                block-name (match-string 2)
+                comment-line (line-number-at-pos)) ;; <-- Capture comment row
         (user-error "Could not find Org breadcrumb link above cursor!")))
         
-    ;; 2. Resolve the file path
-    (let ((org-file-path (expand-file-name org-file (file-name-directory (buffer-file-name)))))
+    ;; Math: How far down from the breadcrumb comment were we?
+    (let* ((line-offset (- current-line comment-line))
+           (org-file-path (expand-file-name org-file (file-name-directory (buffer-file-name)))))
+           
       (unless (file-exists-p org-file-path)
         (user-error "Org file '%s' does not exist." org-file-path))
         
-      ;; 3. THE FIX: Load silently and force it into the exact current window
+      ;; 2. Load silently and force it into the exact current window
       (let ((buf (find-file-noselect org-file-path)))
         (set-window-buffer current-win buf)
         (select-window current-win)
         (set-buffer buf)
         
-        ;; 4. Find the block in the Org file
+        ;; 3. Find the block in the Org file
         (goto-char (point-min))
-        (let ((case-fold-search t)) ;; Ignore case for #+NAME:
+        (let ((case-fold-search t))
           (if (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
               (progn
-                (forward-line 1) ;; Drop cursor inside the block
-                (recenter))      ;; Center the screen
+                ;; --- 4. APPLY ROW AND COLUMN OFFSET ---
+                ;; We add 1 to the offset to account for the `#+begin_src` line 
+                ;; that exists in Org but doesn't exist in the C++ file.
+                (beginning-of-line)
+                (forward-line (1+ line-offset)) 
+                (move-to-column current-col) ;; Snap to exact column!
+                (recenter))
             (message "Could not find block '%s' in %s" block-name org-file)))))))
 
 (global-set-key (kbd "C-c j") 'my/jump-back-to-org-no-split)
 
 (defun my/org-babel-jump-to-tangle-file ()
-  "Jump from an Org source block to the exact same row in the tangled file."
+  "Jump from an Org source block to the exact row and column in the tangled file."
   (interactive)
   (let* ((info (org-babel-get-src-block-info 'light))
          (tangle-target (cdr (assq :tangle (nth 2 info))))
          (block-name (nth 4 info))
          
-         ;; --- 1. CALCULATE ROW OFFSET ---
+         ;; --- 1. CAPTURE ROW AND COLUMN ---
+         (current-col (current-column))       ;; <-- Capture horizontal position
          (current-line (line-number-at-pos))
-         ;; Find exactly where the #+begin_src line is
          (src-head-pos (org-babel-where-is-src-block-head))
-         ;; Convert that position into a line number
          (head-line (save-excursion 
                       (goto-char src-head-pos) 
                       (line-number-at-pos)))
-         ;; The math: How many lines down from #+begin_src are we?
          (line-offset (- current-line head-line)))
     
     (unless tangle-target
@@ -616,14 +622,14 @@ Completely bypasses Org's internal link engine to guarantee NO SPLITTING."
           (let ((regex (format "\\[\\[file:.*::%s\\]\\[%s\\]\\]" block-name block-name)))
             (if (re-search-forward regex nil t)
                 (progn
-                  ;; --- 2. APPLY ROW OFFSET ---
-                  (beginning-of-line)         ;; Snap to start of the // [[file...]] comment
-                  (forward-line line-offset)  ;; Jump down by the exact offset amount!
-                  (recenter))                 ;; Center the screen
+                  ;; --- 2. APPLY ROW AND COLUMN OFFSET ---
+                  (beginning-of-line)         
+                  (forward-line line-offset)   ;; Drop down to exact row
+                  (move-to-column current-col) ;; Snap to exact column!
+                  (recenter))                 
               (message "Could not find block '%s' in tangled file." block-name)))
         (message "Block has no #+name.")))))
 
-;; Your keybinding will now work:
 (global-set-key (kbd "C-c t") 'my/org-babel-jump-to-tangle-file)
 
 ;; ==========================================
