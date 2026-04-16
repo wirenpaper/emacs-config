@@ -544,6 +544,71 @@
         (message "No link under cursor.")))))
 
 ;; ==========================================
+;; JUMP LOGIC TO AND BACK FROM TANGLED FILE
+;; ==========================================
+
+;;(defun my-org-jump-exact-line-and-column ()
+;;  "Jump from a tangled file to the exact line and column in the Org file."
+;;  (interactive)
+;;  (let* ((current-line (line-number-at-pos))
+;;         (current-col (current-column))  ;; <-- 1. CAPTURE EXACT COLUMN
+;;         ;; Find the Org tracking link above our cursor
+;;         (link-pos (save-excursion
+;;                     (re-search-backward "\\[\\[file:.*\\]\\]" nil t)))
+;;         (comment-line (if link-pos
+;;                           (save-excursion
+;;                             (goto-char link-pos)
+;;                             (line-number-at-pos))
+;;                         nil)))
+;;    (if (not comment-line)
+;;        (message "No Org tracking link found above this line!")
+;;      (let ((offset (- current-line comment-line)))
+;;        ;; Jump to the general block (built-in behavior)
+;;        (org-babel-tangle-jump-to-org)
+;;        ;; Move cursor down to the actual start of the code block
+;;        (re-search-forward "#\\+begin_src" nil t)
+;;        ;; Jump down by the exact line offset amount
+;;        (forward-line offset)
+;;        ;; Move horizontally to the exact column!
+;;        (move-to-column current-col)     ;; <-- 2. APPLY EXACT COLUMN
+;;        ;; Center the screen on the cursor
+;;        (recenter)))))
+
+(global-set-key (kbd "C-c j") 'org-babel-tangle-jump-to-org)
+
+(defun my/org-babel-jump-to-tangle-file ()
+  "Jump from an Org source block to the tangled file and place point at the block."
+  (interactive)
+  (let* ((info (org-babel-get-src-block-info 'light))
+         (tangle-target (cdr (assq :tangle (nth 2 info))))
+         (block-name (nth 4 info)))
+    
+    ;; 1. Check if we are in a block
+    (unless tangle-target
+      (user-error "Not in a source block or :tangle is not set"))
+      
+    ;; 2. Determine target file path
+    (let ((tangle-file (expand-file-name tangle-target)))
+      (unless (file-exists-p tangle-file)
+        (user-error "Tangled file '%s' does not exist. Did you run `org-babel-tangle`?" tangle-file))
+      
+      ;; 3. Open the tangled file
+      (find-file tangle-file)
+      (goto-char (point-min))
+      
+      ;; 4. Search for the Org-generated comment link
+      (if block-name
+          ;; Regex looks for: [[file:any-path::block-name][block-name]]
+          (let ((regex (format "\\[\\[file:.*::%s\\]\\[%s\\]\\]" block-name block-name)))
+            (if (re-search-forward regex nil t)
+                (forward-line 1) ; Move cursor just below the comment
+              (message "Could not find block '%s' in tangled file." block-name)))
+        (message "Block has no #+name. Opened file, but couldn't jump to a specific location.")))))
+
+;; Your keybinding will now work:
+(global-set-key (kbd "C-c t") 'my/org-babel-jump-to-tangle-file)
+
+;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
 ;; ==========================================
 
