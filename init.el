@@ -602,6 +602,35 @@
      (t
       (message "Not on a transclude line, link, or inside one!")))))
 
+(setq org-edit-src-content-indentation 0)
+(setq org-src-preserve-indentation t)
+
+(defun my-quiet-detangle ()
+  "Save current file, detangle silently,
+   save the target Org file, and restore windows."
+  (interactive)
+  ;; 1. Save the current C++ file first (forces detangle to see your latest changes)
+  (save-buffer)
+  
+  ;; 2. Save the current window/split configuration
+  (save-window-excursion
+    ;; 3. Run the detangle command
+    (org-babel-detangle)
+    
+    ;; 4. Find the Org file that was just updated and save it automatically
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (and (eq major-mode 'org-mode) (buffer-modified-p))
+          (save-buffer)))))
+          
+  ;; 5. Tell the user it worked without moving their cursor or splitting the screen
+  (message "Silently detangled and saved back to Org!"))
+
+;; Bind the new quiet function to Evil
+(with-eval-after-load 'evil
+  (evil-ex-define-cmd "tangle" 'org-babel-tangle)
+  (evil-ex-define-cmd "detangle" 'my-quiet-detangle))
+
 ;; ==========================================
 ;; MANUAL LINK REVEAL (TOGGLE) LOGIC
 ;; ==========================================
@@ -986,6 +1015,13 @@ Instantly jumps if exactly 1. Spawns a PRISTINE fullscreen list if 2+."
 
 ;; Enable C/C++ execution in Org Babel
 (require 'ob-C)
+
+;; Get lua
+(use-package lua-mode
+  :ensure t
+  :mode "\\.lua\\'"
+  :custom
+  (lua-indent-level 2)) ; Change to 4 if you prefer wider indents
 
 ;; ==========================================
 ;; SPC n p now ALWAYS inserts [[id:UUID][title]] 
