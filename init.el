@@ -626,9 +626,29 @@
   ;; 5. Tell the user it worked without moving their cursor or splitting the screen
   (message "Silently detangled and saved back to Org!"))
 
+(defun my-quiet-tangle ()
+  "Save the Org file, tangle it, and silently reload any open tangled files."
+  (interactive)
+  ;; 1. Save the Org file
+  (save-buffer)
+  
+  ;; 2. Tangle and capture the list of generated files
+  (let ((tangled-files (org-babel-tangle)))
+    ;; 3. Loop through the generated files
+    (dolist (file tangled-files)
+      (let ((buf (get-file-buffer file)))
+        ;; 4. If the file is currently open in Emacs, refresh it silently
+        (when buf
+          (with-current-buffer buf
+            ;; (revert-buffer IGNORE-AUTO NOCONFIRM PRESERVE-MODES)
+            (revert-buffer t t t))))))
+            
+  ;; 5. Tell the user it worked
+  (message "Silently tangled and refreshed open files!"))
+
 ;; Bind the new quiet function to Evil
 (with-eval-after-load 'evil
-  (evil-ex-define-cmd "tangle" 'org-babel-tangle)
+  (evil-ex-define-cmd "tangle" 'my-quiet-tangle)
   (evil-ex-define-cmd "detangle" 'my-quiet-detangle))
 
 ;; ==========================================
