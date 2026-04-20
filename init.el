@@ -499,7 +499,7 @@
 (defun my/org-transclusion-toggle ()
   "Smart K toggle. Opens blocks normally, or
    creates temporary vanishing previews for inline links.
-   Bulletproof version: mathematically finds the inserted block and hides all wrappers."
+   Bulletproof version: mathematically finds the inserted block and hides wrappers without bleeding."
   (interactive)
   (let* ((context (org-element-context))
          (type (car context))
@@ -593,9 +593,8 @@
                       ;; ---------------------------------------------------------
                       ;; BULLETPROOF WRAPPER HIDING LOGIC
                       ;; ---------------------------------------------------------
-                      ;; Calculate exactly how much text org-transclusion just inserted
                       (let* ((chars-added (- (point-max) pmax-before))
-                             (tc-end (+ (point) chars-added 10)))
+                             (tc-end (+ (point) chars-added 50)))
                         
                         (save-excursion
                           (goto-char insert-pos)
@@ -608,9 +607,11 @@
                               (overlay-put hide-top 'evaporate t)))
                               
                           ;; 2. Hunt for the end of the source block
-                          ;; Hides `#+end_src` down to the absolute end of the transclusion
+                          ;; THE FIX: We stop hiding at `(line-end-position)` exactly.
+                          ;; This hides `#+end_src` but completely spares the boundary newline
+                          ;; and any of your normal text below it, stopping the fringe bleed.
                           (when (re-search-forward "^[ \t]*#\\+end_src" tc-end t)
-                            (let ((hide-bot (make-overlay (match-beginning 0) tc-end)))
+                            (let ((hide-bot (make-overlay (match-beginning 0) (line-end-position))))
                               (overlay-put hide-bot 'invisible t)
                               (overlay-put hide-bot 'evaporate t)))))
                       ;; ---------------------------------------------------------
