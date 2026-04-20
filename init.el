@@ -498,7 +498,8 @@
 
 (defun my/org-transclusion-toggle ()
   "Smart K toggle. Opens blocks normally, or
-   creates temporary vanishing previews for inline links."
+   creates temporary vanishing previews for inline links.
+   Bulletproof version: mathematically finds the inserted block and hides all wrappers."
   (interactive)
   (let* ((context (org-element-context))
          (type (car context))
@@ -577,9 +578,10 @@
             (save-excursion
               (end-of-line)
               (let ((insert-pos (point))
+                    (pmax-before (point-max))
                     (was-modified (buffer-modified-p)))
                 
-                ;; Insert normally so Org sees it, but tag it for the garbage collector
+                ;; Insert normally so Org sees it
                 (insert "\n#+transclude: " link-str)
                 (put-text-property insert-pos (point) 'my-inline-preview t)
                 
@@ -587,6 +589,32 @@
                 (condition-case err
                     (progn
                       (org-transclusion-add)
+                      
+                      ;; ---------------------------------------------------------
+                      ;; BULLETPROOF WRAPPER HIDING LOGIC
+                      ;; ---------------------------------------------------------
+                      ;; Calculate exactly how much text org-transclusion just inserted
+                      (let* ((chars-added (- (point-max) pmax-before))
+                             (tc-end (+ (point) chars-added 10)))
+                        
+                        (save-excursion
+                          (goto-char insert-pos)
+                          
+                          ;; 1. Hunt for the start of the source block
+                          ;; Hides the `#+transclude:` line, the `blablabla`, and `#+begin_src`
+                          (when (re-search-forward "^[ \t]*#\\+begin_src.*?\n" tc-end t)
+                            (let ((hide-top (make-overlay (1+ insert-pos) (point))))
+                              (overlay-put hide-top 'invisible t)
+                              (overlay-put hide-top 'evaporate t)))
+                              
+                          ;; 2. Hunt for the end of the source block
+                          ;; Hides `#+end_src` down to the absolute end of the transclusion
+                          (when (re-search-forward "^[ \t]*#\\+end_src" tc-end t)
+                            (let ((hide-bot (make-overlay (match-beginning 0) tc-end)))
+                              (overlay-put hide-bot 'invisible t)
+                              (overlay-put hide-bot 'evaporate t)))))
+                      ;; ---------------------------------------------------------
+                      
                       (message "Inline preview opened"))
                   (error
                    (delete-region insert-pos (line-end-position))
@@ -767,8 +795,9 @@
 
 (defun my/org-tangle-jump-toggle ()
   "Toggle between an Org source block and its tangled file.
-If inside an active transclusion, reads the ID directly from the buffer and jumps natively.
-Maintains exact row and column persistence, with absolutely no window splitting."
+   If inside an active transclusion, reads the ID directly from
+   the buffer and jumps natively. Maintains exact row and
+   column persistence, with absolutely no window splitting."
   (interactive)
   (cond
    ;; =======================================================
