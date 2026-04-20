@@ -792,25 +792,40 @@ Maintains exact row and column persistence, with absolutely no window splitting.
                           (line-number-at-pos)))
              (line-offset (- current-line head-line))
              
-             ;; 1. Search straight upward for the ID. 
-             ;; Because we start at the code block, the very first ID we hit 
-             ;; is mathematically guaranteed to be the transclusion link!
-             (target-id (save-excursion
-                          (goto-char src-head-pos)
-                          (if (re-search-backward "id:\\([0-9a-fA-F-]+\\)" nil t)
-                              (match-string 1)
-                            nil))))
+             ;; === THE BULLETPROOF ID EXTRACTION ===
+             (target-id (let ((search-invisible t))
+                          (save-excursion
+                            (goto-char src-head-pos)
+                            ;; 1. Search backward to hit the nearest line with IDs
+                            (when (re-search-backward "id:[0-9a-fA-F-]+" nil t)
+                              ;; Move to the left edge of the line to fix the right-to-left bug
+                              (beginning-of-line)
+                              
+                              (let ((found-id nil))
+                                ;; 2. The Clue: Look for the red beacon K left behind!
+                                (dolist (ov (overlays-in (line-beginning-position) (line-end-position)))
+                                  (when (overlay-get ov 'my-active-link-preview)
+                                    (let ((text (buffer-substring-no-properties (overlay-start ov) (overlay-end ov))))
+                                      (when (string-match "id:\\([0-9a-fA-F-]+\\)" text)
+                                        (setq found-id (match-string 1 text))))))
+                                
+                                ;; 3. Fallback: If no beacon, scan left-to-right to grab the FIRST ID
+                                (unless found-id
+                                  (when (re-search-forward "id:\\([0-9a-fA-F-]+\\)" (line-end-position) t)
+                                    (setq found-id (match-string 1))))
+                                
+                                found-id))))))
              
         (unless target-id
-          (user-error "Could not find an ID link above this block!"))
+          (user-error "Could not extract the #+transclude ID!"))
              
-        ;; 2. Bookmark your exact cursor location inside the code block for C-o
+        ;; 1. Bookmark your exact cursor location inside the code block for C-o
         (evil-set-jump)
         
-        ;; 3. Jump natively via ID (Guarantees zero splits!)
+        ;; 2. Jump natively via ID (Guarantees zero splits!)
         (org-id-goto target-id)
         
-        ;; 4. Shift cursor down to the correct src block under the destination heading
+        ;; 3. Shift cursor down to the correct src block under the destination heading
         (if block-name
             (let ((regex (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name))))
               (if (re-search-forward regex nil t)
@@ -819,7 +834,7 @@ Maintains exact row and column persistence, with absolutely no window splitting.
           ;; Fallback if block has no name
           (re-search-forward "^[ \t]*#\\+begin_src" nil t))
           
-        ;; 5. Do the math of the column and row such that it lands properly
+        ;; 4. Do the math of the column and row such that it lands properly
         (beginning-of-line)
         (forward-line line-offset)
         (move-to-column current-col)
