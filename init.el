@@ -499,7 +499,7 @@
 (defun my/org-transclusion-toggle ()
   "Smart K toggle. Opens blocks normally, or
    creates temporary vanishing previews for inline links.
-   Bulletproof version: mathematically finds the inserted block and hides wrappers without bleeding."
+   Bulletproof version: perfectly hugs the code and stops fringe bleed."
   (interactive)
   (let* ((context (org-element-context))
          (type (car context))
@@ -600,18 +600,17 @@
                           (goto-char insert-pos)
                           
                           ;; 1. Hunt for the start of the source block
-                          ;; Hides the `#+transclude:` line, the `blablabla`, and `#+begin_src`
                           (when (re-search-forward "^[ \t]*#\\+begin_src.*?\n" tc-end t)
                             (let ((hide-top (make-overlay (1+ insert-pos) (point))))
                               (overlay-put hide-top 'invisible t)
                               (overlay-put hide-top 'evaporate t)))
                               
                           ;; 2. Hunt for the end of the source block
-                          ;; THE FIX: We stop hiding at `(line-end-position)` exactly.
-                          ;; This hides `#+end_src` but completely spares the boundary newline
-                          ;; and any of your normal text below it, stopping the fringe bleed.
                           (when (re-search-forward "^[ \t]*#\\+end_src" tc-end t)
-                            (let ((hide-bot (make-overlay (match-beginning 0) (line-end-position))))
+                            ;; THE FIX: (1- (match-beginning 0)) grabs the preceding newline
+                            ;; so the gray box hugs the code tightly. (line-end-position) stops the bleed.
+                            (let* ((start-hide (max (point-min) (1- (match-beginning 0))))
+                                   (hide-bot (make-overlay start-hide (line-end-position))))
                               (overlay-put hide-bot 'invisible t)
                               (overlay-put hide-bot 'evaporate t)))))
                       ;; ---------------------------------------------------------
