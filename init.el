@@ -767,11 +767,59 @@
 
 (defun my/org-tangle-jump-toggle ()
   "Toggle between an Org source block and its tangled file.
-Maintains exact row and column persistence, with no window splitting."
+If inside an active transclusion, jumps one-way via ID to the source.
+Maintains exact row and column persistence, with absolutely no window splitting."
   (interactive)
   (cond
    ;; =======================================================
-   ;; CASE 1: We are in Org Mode -> Jump to Tangled File
+   ;; CASE 1: Inside Org-Transclusion -> The K -> g d -> Math Strategy
+   ;; =======================================================
+   ((and (derived-mode-p 'org-mode) 
+         (fboundp 'org-transclusion-within-transclusion-p)
+         (org-transclusion-within-transclusion-p))
+    
+    (if (not (org-in-src-block-p))
+        ;; NOT in a source block: just close it and jump
+        (progn
+          (my/org-transclusion-toggle)               ;; Simulates 'K'
+          (my/org-transclusion-open-source-at-point) ;; Simulates 'g d'
+          (message "Jumped to transclusion source heading."))
+          
+      ;; INSIDE a source block: Calculate offsets, execute K -> g d, and jump
+      (let* ((info (org-babel-get-src-block-info 'light))
+             (block-name (nth 4 info))
+             (current-col (current-column))
+             (current-line (line-number-at-pos))
+             (src-head-pos (org-babel-where-is-src-block-head))
+             (head-line (save-excursion 
+                          (goto-char src-head-pos) 
+                          (line-number-at-pos)))
+             (line-offset (- current-line head-line)))
+             
+        ;; 1. Execute 'K' (Closes transclusion, drops cursor safely onto the ID link)
+        (my/org-transclusion-toggle)
+        
+        ;; 2. Execute 'g d' (Reads the ID link under cursor, teleports to exact file & heading)
+        (my/org-transclusion-open-source-at-point)
+        
+        ;; 3. Shift cursor down to the correct src block under the heading
+        (if block-name
+            (let ((regex (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name))))
+              (if (re-search-forward regex nil t)
+                  (re-search-forward "^[ \t]*#\\+begin_src" nil t)
+                (message "Could not find block '%s' under heading." block-name)))
+          ;; Fallback if block has no name
+          (re-search-forward "^[ \t]*#\\+begin_src" nil t))
+          
+        ;; 4. Do the math of the column and row such that it lands properly
+        (beginning-of-line)
+        (forward-line line-offset)
+        (move-to-column current-col)
+        (recenter)
+        (message "Teleported directly via K -> g d sequence!"))))
+
+   ;; =======================================================
+   ;; CASE 2: We are in standard Org Mode -> Jump to Tangled File
    ;; =======================================================
    ((derived-mode-p 'org-mode)
     (unless (org-in-src-block-p)
@@ -813,7 +861,7 @@ Maintains exact row and column persistence, with no window splitting."
           (message "Block has no #+name.")))))
 
    ;; =======================================================
-   ;; CASE 2: We are in a Tangled File -> Jump to Org
+   ;; CASE 3: We are in a Tangled File -> Jump to Org
    ;; =======================================================
    (t
     (let ((current-win (selected-window))
