@@ -605,6 +605,11 @@
 (setq org-edit-src-content-indentation 0)
 (setq org-src-preserve-indentation t)
 
+
+;; =======================================================
+;; tangle, detangle
+;; =======================================================
+
 (defun my-quiet-detangle ()
   "Save current file, detangle silently,
    save the target Org file, and restore windows."
@@ -650,6 +655,61 @@
 (with-eval-after-load 'evil
   (evil-ex-define-cmd "tangle" 'my-quiet-tangle)
   (evil-ex-define-cmd "detangle" 'my-quiet-detangle))
+
+;; =======================================================
+;; org boilerplate setup from source
+;; =======================================================
+
+(defun my/org-it ()
+  "Take the current source code buffer, create
+   a .org file, and wrap it in a src block."
+  (interactive)
+  (unless (buffer-file-name)
+    (error "Buffer is not visiting a file!"))
+  
+  (let* ((source-file (buffer-file-name))
+         (source-name (file-name-nondirectory source-file))
+         (source-ext  (file-name-extension source-file))
+         (source-content (buffer-string))
+         (org-file (concat source-file ".org")) 
+         (lang (pcase source-ext
+                 ("cpp" "cpp")
+                 ("hpp" "cpp")
+                 ("c"   "c")
+                 ("lua" "lua")
+                 ("py"  "python")
+                 ("rs"  "rust")
+                 (_     source-ext)))
+         ;; ADDED FIX: Automatically add :main no for C/C++ to stop the main() wrapping
+         (main-flag (if (member lang '("c" "cpp")) " :main no" "")))
+    
+    (with-current-buffer (find-file-noselect org-file)
+      (when (> (buffer-size) 0)
+        (if (y-or-n-p "Org file already exists. Overwrite? ")
+            (erase-buffer)
+          (error "Aborted `:org-it`")))
+      
+      ;; ADDED FIX: main-flag is injected here
+      (insert (format "#+PROPERTY: header-args:%s :tangle %s :comments link%s\n\n" 
+                      lang source-name main-flag))
+      
+      (insert (format "* %s\n" (capitalize (file-name-sans-extension source-name))))
+      (insert ":PROPERTIES:\n:ID:       " (org-id-uuid) "\n:END:\n\n")
+      
+      (insert "#+name: initial-block\n")
+      (insert (format "#+begin_src %s\n" lang))
+      (insert source-content)
+      (unless (string-suffix-p "\n" source-content)
+        (insert "\n"))
+      (insert "#+end_src\n")
+      
+      (switch-to-buffer (current-buffer))
+      (org-mode)
+      (save-buffer)
+      (message "Successfully org-it'd! No more unwanted main() wraps."))))
+
+(with-eval-after-load 'evil
+  (evil-ex-define-cmd "org-it" 'my/org-it))
 
 ;; ==========================================
 ;; MANUAL LINK REVEAL (TOGGLE) LOGIC
