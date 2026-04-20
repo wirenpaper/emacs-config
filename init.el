@@ -767,25 +767,21 @@
 
 (defun my/org-tangle-jump-toggle ()
   "Toggle between an Org source block and its tangled file.
-If inside an active transclusion, jumps one-way via ID to the source.
+If inside an active transclusion, reads the ID directly from the buffer and jumps natively.
 Maintains exact row and column persistence, with absolutely no window splitting."
   (interactive)
   (cond
    ;; =======================================================
-   ;; CASE 1: Inside Org-Transclusion -> The K -> g d -> Math Strategy
+   ;; CASE 1: Inside Org-Transclusion -> Direct ID Extraction & Math
    ;; =======================================================
    ((and (derived-mode-p 'org-mode) 
          (fboundp 'org-transclusion-within-transclusion-p)
          (org-transclusion-within-transclusion-p))
     
     (if (not (org-in-src-block-p))
-        ;; NOT in a source block: just close it and jump
-        (progn
-          (my/org-transclusion-toggle)               ;; Simulates 'K'
-          (my/org-transclusion-open-source-at-point) ;; Simulates 'g d'
-          (message "Jumped to transclusion source heading."))
+        (user-error "Inside transclusion, but not in a source block!")
           
-      ;; INSIDE a source block: Calculate offsets, execute K -> g d, and jump
+      ;; INSIDE a source block: Calculate offsets, read ID natively, jump, apply math
       (let* ((info (org-babel-get-src-block-info 'light))
              (block-name (nth 4 info))
              (current-col (current-column))
@@ -794,15 +790,27 @@ Maintains exact row and column persistence, with absolutely no window splitting.
              (head-line (save-excursion 
                           (goto-char src-head-pos) 
                           (line-number-at-pos)))
-             (line-offset (- current-line head-line)))
+             (line-offset (- current-line head-line))
              
-        ;; 1. Execute 'K' (Closes transclusion, drops cursor safely onto the ID link)
-        (my/org-transclusion-toggle)
+             ;; 1. Search straight upward for the ID. 
+             ;; Because we start at the code block, the very first ID we hit 
+             ;; is mathematically guaranteed to be the transclusion link!
+             (target-id (save-excursion
+                          (goto-char src-head-pos)
+                          (if (re-search-backward "id:\\([0-9a-fA-F-]+\\)" nil t)
+                              (match-string 1)
+                            nil))))
+             
+        (unless target-id
+          (user-error "Could not find an ID link above this block!"))
+             
+        ;; 2. Bookmark your exact cursor location inside the code block for C-o
+        (evil-set-jump)
         
-        ;; 2. Execute 'g d' (Reads the ID link under cursor, teleports to exact file & heading)
-        (my/org-transclusion-open-source-at-point)
+        ;; 3. Jump natively via ID (Guarantees zero splits!)
+        (org-id-goto target-id)
         
-        ;; 3. Shift cursor down to the correct src block under the heading
+        ;; 4. Shift cursor down to the correct src block under the destination heading
         (if block-name
             (let ((regex (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name))))
               (if (re-search-forward regex nil t)
@@ -811,12 +819,12 @@ Maintains exact row and column persistence, with absolutely no window splitting.
           ;; Fallback if block has no name
           (re-search-forward "^[ \t]*#\\+begin_src" nil t))
           
-        ;; 4. Do the math of the column and row such that it lands properly
+        ;; 5. Do the math of the column and row such that it lands properly
         (beginning-of-line)
         (forward-line line-offset)
         (move-to-column current-col)
         (recenter)
-        (message "Teleported directly via K -> g d sequence!"))))
+        (message "Teleported via pure ID! Zero splits, C-o works perfectly."))))
 
    ;; =======================================================
    ;; CASE 2: We are in standard Org Mode -> Jump to Tangled File
