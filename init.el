@@ -793,15 +793,13 @@
 ;; JUMP LOGIC TO AND BACK FROM TANGLED FILE
 ;; ==========================================
 
-(defun my/org-tangle-jump-toggle ()
-  "Toggle between an Org source block and its tangled file.
-   If inside an active transclusion, reads the ID directly from
-   the buffer and jumps natively. Maintains exact row and
-   column persistence, with absolutely no window splitting."
+(defun my/org-jump-drill-down ()
+  "Drill downward: Transclusion Clone -> Org Source Block -> Tangled Code.
+   Maintains exact row/col persistence with absolutely no window splitting."
   (interactive)
   (cond
    ;; =======================================================
-   ;; CASE 1: Inside Org-Transclusion -> Direct ID Extraction & Math
+   ;; CASE 1: Inside Org-Transclusion -> Jump to Org Source
    ;; =======================================================
    ((and (derived-mode-p 'org-mode) 
          (fboundp 'org-transclusion-within-transclusion-p)
@@ -810,7 +808,6 @@
     (if (not (org-in-src-block-p))
         (user-error "Inside transclusion, but not in a source block!")
           
-      ;; INSIDE a source block: Calculate offsets, read ID natively, jump, apply math
       (let* ((info (org-babel-get-src-block-info 'light))
              (block-name (nth 4 info))
              (current-col (current-column))
@@ -821,57 +818,43 @@
                           (line-number-at-pos)))
              (line-offset (- current-line head-line))
              
-             ;; === THE BULLETPROOF ID EXTRACTION ===
              (target-id (let ((search-invisible t))
                           (save-excursion
                             (goto-char src-head-pos)
-                            ;; 1. Search backward to hit the nearest line with IDs
                             (when (re-search-backward "id:[0-9a-fA-F-]+" nil t)
-                              ;; Move to the left edge of the line to fix the right-to-left bug
                               (beginning-of-line)
-                              
                               (let ((found-id nil))
-                                ;; 2. The Clue: Look for the red beacon K left behind!
                                 (dolist (ov (overlays-in (line-beginning-position) (line-end-position)))
                                   (when (overlay-get ov 'my-active-link-preview)
                                     (let ((text (buffer-substring-no-properties (overlay-start ov) (overlay-end ov))))
                                       (when (string-match "id:\\([0-9a-fA-F-]+\\)" text)
                                         (setq found-id (match-string 1 text))))))
-                                
-                                ;; 3. Fallback: If no beacon, scan left-to-right to grab the FIRST ID
                                 (unless found-id
                                   (when (re-search-forward "id:\\([0-9a-fA-F-]+\\)" (line-end-position) t)
                                     (setq found-id (match-string 1))))
-                                
                                 found-id))))))
              
         (unless target-id
           (user-error "Could not extract the #+transclude ID!"))
              
-        ;; 1. Bookmark your exact cursor location inside the code block for C-o
         (evil-set-jump)
-        
-        ;; 2. Jump natively via ID (Guarantees zero splits!)
         (org-id-goto target-id)
         
-        ;; 3. Shift cursor down to the correct src block under the destination heading
         (if block-name
             (let ((regex (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name))))
               (if (re-search-forward regex nil t)
                   (re-search-forward "^[ \t]*#\\+begin_src" nil t)
                 (message "Could not find block '%s' under heading." block-name)))
-          ;; Fallback if block has no name
           (re-search-forward "^[ \t]*#\\+begin_src" nil t))
           
-        ;; 4. Do the math of the column and row such that it lands properly
         (beginning-of-line)
         (forward-line line-offset)
         (move-to-column current-col)
         (recenter)
-        (message "Teleported via pure ID! Zero splits, C-o works perfectly."))))
+        (message "Teleported to Org Source! Zero splits."))))
 
    ;; =======================================================
-   ;; CASE 2: We are in standard Org Mode -> Jump to Tangled File
+   ;; CASE 2: In standard Org Source -> Jump to Tangled File
    ;; =======================================================
    ((derived-mode-p 'org-mode)
     (unless (org-in-src-block-p)
@@ -880,8 +863,6 @@
     (let* ((info (org-babel-get-src-block-info 'light))
            (tangle-target (cdr (assq :tangle (nth 2 info))))
            (block-name (nth 4 info))
-           
-           ;; Capture exact placement
            (current-col (current-column))
            (current-line (line-number-at-pos))
            (src-head-pos (org-babel-where-is-src-block-head))
@@ -897,7 +878,7 @@
         (unless (file-exists-p tangle-file)
           (user-error "Tangled file '%s' does not exist." tangle-file))
         
-        ;; Open the file
+        (evil-set-jump)
         (find-file tangle-file)
         (goto-char (point-min))
         
@@ -908,20 +889,29 @@
                     (beginning-of-line)         
                     (forward-line line-offset)
                     (move-to-column current-col)
-                    (recenter))                 
+                    (recenter)
+                    (message "Teleported to Tangled Code! Zero splits."))                 
                 (message "Could not find block '%s' in tangled file." block-name)))
           (message "Block has no #+name.")))))
 
+   (t (user-error "Not in an Org block or Transclusion!"))))
+
+(evil-define-key 'normal 'global (kbd "g m") 'my/org-jump-drill-down)
+
+(defun my/org-jump-surface-up ()
+  "Surface upward: Tangled Code -> Org Source Block -> Transclusion Clone.
+   Maintains exact row/col persistence with absolutely no window splitting."
+  (interactive)
+  (cond
    ;; =======================================================
-   ;; CASE 3: We are in a Tangled File -> Jump to Org
+   ;; CASE 1: In a Tangled File -> Jump up to Org Source
    ;; =======================================================
-   (t
+   ((not (derived-mode-p 'org-mode))
     (let ((current-win (selected-window))
           (current-col (current-column))
           (current-line (line-number-at-pos))
           org-file block-name comment-line)
       
-      ;; 1. Search backward to find the Org breadcrumb comment
       (save-excursion
         (if (re-search-backward "\\[\\[file:\\(.*?\\)::\\(.*?\\)\\]\\[" nil t)
             (setq org-file (match-string 1)
@@ -935,13 +925,12 @@
         (unless (file-exists-p org-file-path)
           (user-error "Org file '%s' does not exist." org-file-path))
           
-        ;; 2. Load silently and force it into the exact current window (NO SPLITS)
+        (evil-set-jump)
         (let ((buf (find-file-noselect org-file-path)))
           (set-window-buffer current-win buf)
           (select-window current-win)
           (set-buffer buf)
           
-          ;; 3. Find the block in the Org file
           (goto-char (point-min))
           (let ((case-fold-search t))
             (if (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
@@ -949,117 +938,84 @@
                   (beginning-of-line)
                   (forward-line (1+ line-offset)) 
                   (move-to-column current-col)
-                  (recenter))
-              (message "Could not find block '%s' in %s" block-name org-file)))))))))
+                  (recenter)
+                  (message "Teleported up to Org Source! Zero splits."))
+              (message "Could not find block '%s' in %s" block-name org-file)))))))
 
-;; One binding to rule them all:
-(evil-define-key 'normal 'global (kbd "g m") 'my/org-tangle-jump-toggle)
+   ;; =======================================================
+   ;; CASE 2: In Org Source -> Jump up to Transclusion Clone
+   ;; =======================================================
+   ((derived-mode-p 'org-mode)
+    (unless (org-in-src-block-p)
+      (user-error "Not inside an Org source block!"))
+    (when (and (fboundp 'org-transclusion-within-transclusion-p)
+               (org-transclusion-within-transclusion-p))
+      (user-error "Already at the highest level (Transclusion). Use 'g m' to go down."))
 
-(defun my/org-jump-source-to-transclusion ()
-  "Jump from an Org source block back to its destination clone.
-   Uses a robust multi-strategy scan to find the destination buffer, 
-   guaranteeing a cross-file jump with exact row/col math."
-  (interactive)
-  (unless (derived-mode-p 'org-mode)
-    (user-error "Not in an Org mode buffer!"))
-  (unless (org-in-src-block-p)
-    (user-error "Not inside an Org source block!"))
+    (let* ((info (org-babel-get-src-block-info 'light))
+           (block-name (nth 4 info))
+           (src-id (save-excursion (ignore-errors (org-back-to-heading t) (org-id-get))))
+           (current-col (current-column))
+           (current-line (line-number-at-pos))
+           (src-head-pos (org-babel-where-is-src-block-head))
+           (head-line (save-excursion
+                        (goto-char src-head-pos)
+                        (line-number-at-pos)))
+           (line-offset (- current-line head-line))
+           (current-win (selected-window))
+           (source-buf (current-buffer))
+           target-buf target-pos)
 
-  (let* ((info (org-babel-get-src-block-info 'light))
-         (block-name (nth 4 info))
-         (src-id (save-excursion (ignore-errors (org-back-to-heading t) (org-id-get))))
-         (current-col (current-column))
-         (current-line (line-number-at-pos))
-         (src-head-pos (org-babel-where-is-src-block-head))
-         (head-line (save-excursion
-                      (goto-char src-head-pos)
-                      (line-number-at-pos)))
-         (line-offset (- current-line head-line))
-         (current-win (selected-window))
-         (source-buf (current-buffer))
-         target-buf target-pos)
-
-    ;; =======================================================
-    ;; STRATEGY 1: Memory Overlay Pointer Scan
-    ;; Emacs transclusion overlays MUST contain a marker pointing 
-    ;; back to the source file to know how to sync. We scan other 
-    ;; buffers to find any overlay pointing to our current file.
-    ;; =======================================================
-    (dolist (buf (buffer-list))
-      (when (and (not target-buf)
-                 (not (eq buf source-buf)) ; GUARANTEE a different file
-                 (with-current-buffer buf (derived-mode-p 'org-mode)))
-        (with-current-buffer buf
-          (dolist (ov (overlays-in (point-min) (point-max)))
-            (let ((props (overlay-properties ov))
-                  points-to-us)
-              (while props
-                (let ((val (cadr props)))
-                  ;; If the overlay has ANY property that is a marker pointing to our source file:
-                  (when (and (markerp val) (eq (marker-buffer val) source-buf))
-                    (setq points-to-us t)))
-                (setq props (cddr props)))
-              (when points-to-us
-                (setq target-buf buf
-                      target-pos (overlay-start ov))))))))
-
-    ;; =======================================================
-    ;; STRATEGY 2: Literal Text Fallback Scan
-    ;; If the overlay scan fails, we literally scan other org files 
-    ;; for `#+name: diagonal-matrix-class` (or whatever your block name is).
-    ;; =======================================================
-    (unless target-buf
+      ;; Strategy 1: Overlay Marker Check
       (dolist (buf (buffer-list))
         (when (and (not target-buf)
                    (not (eq buf source-buf))
                    (with-current-buffer buf (derived-mode-p 'org-mode)))
           (with-current-buffer buf
-            (save-excursion
-              (goto-char (point-min))
-              (let ((case-fold-search t)
-                    (search-invisible t))
-                ;; Look for the rendered block name
-                (if (and block-name
-                         (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t))
-                    (setq target-buf buf
-                          target-pos (line-beginning-position))
-                  ;; Fallback to ID
-                  (goto-char (point-min))
-                  (when (and src-id
-                             (re-search-forward (format "%s" (regexp-quote src-id)) nil t))
-                    (setq target-buf buf
-                          target-pos (line-beginning-position))))))))))
+            (dolist (ov (overlays-in (point-min) (point-max)))
+              (let ((props (overlay-properties ov)) points-to-us)
+                (while props
+                  (let ((val (cadr props)))
+                    (when (and (markerp val) (eq (marker-buffer val) source-buf))
+                      (setq points-to-us t)))
+                  (setq props (cddr props)))
+                (when points-to-us
+                  (setq target-buf buf target-pos (overlay-start ov))))))))
 
-    ;; =======================================================
-    ;; THE JUMP AND THE MATH (Mirroring your original code)
-    ;; =======================================================
-    (unless (and target-buf target-pos (buffer-live-p target-buf))
-      (user-error "Could not find the destination clone in any other open buffer!"))
+      ;; Strategy 2: Text Fallback Check
+      (unless target-buf
+        (dolist (buf (buffer-list))
+          (when (and (not target-buf) (not (eq buf source-buf))
+                     (with-current-buffer buf (derived-mode-p 'org-mode)))
+            (with-current-buffer buf
+              (save-excursion
+                (goto-char (point-min))
+                (let ((case-fold-search t) (search-invisible t))
+                  (if (and block-name (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t))
+                      (setq target-buf buf target-pos (line-beginning-position))
+                    (goto-char (point-min))
+                    (when (and src-id (re-search-forward (format "%s" (regexp-quote src-id)) nil t))
+                      (setq target-buf buf target-pos (line-beginning-position))))))))))
 
-    ;; 1. Bookmark cursor location for C-o
-    (evil-set-jump)
+      (unless (and target-buf target-pos (buffer-live-p target-buf))
+        (user-error "Could not find the transclusion clone in any other open buffer!"))
 
-    ;; 2. Force it into the exact current window (NO SPLITS)
-    (set-window-buffer current-win target-buf)
-    (select-window current-win)
-    (set-buffer target-buf)
+      (evil-set-jump)
+      (set-window-buffer current-win target-buf)
+      (select-window current-win)
+      (set-buffer target-buf)
+      (goto-char target-pos)
 
-    ;; 3. Go to the general vicinity of the clone
-    (goto-char target-pos)
+      (if (re-search-forward "^[ \t]*#\\+begin_src" nil t)
+          (progn
+            (beginning-of-line)
+            (forward-line line-offset)
+            (move-to-column current-col)
+            (recenter)
+            (message "Teleported up to Transclusion! Zero splits."))
+        (message "Switched buffer, but could not locate #+begin_src for math anchor."))))))
 
-    ;; 4. THE MATH ANCHOR
-    ;; We must establish the exact zero-line of the code block so the math works perfectly
-    (if (re-search-forward "^[ \t]*#\\+begin_src" nil t)
-        (progn
-          (beginning-of-line)
-          (forward-line line-offset)
-          (move-to-column current-col)
-          (recenter)
-          (message "Teleported to destination file! Zero splits, exact row/col."))
-      (message "Switched buffer, but could not locate #+begin_src for math anchor."))))
-
-;; Map to g c
-(evil-define-key 'normal 'global (kbd "g c") 'my/org-jump-source-to-transclusion)
+(evil-define-key 'normal 'global (kbd "g c") 'my/org-jump-surface-up)
 
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
