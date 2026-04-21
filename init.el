@@ -955,6 +955,112 @@
 ;; One binding to rule them all:
 (evil-define-key 'normal 'global (kbd "g m") 'my/org-tangle-jump-toggle)
 
+(defun my/org-jump-source-to-transclusion ()
+  "Jump from an Org source block back to its destination clone.
+   Uses a robust multi-strategy scan to find the destination buffer, 
+   guaranteeing a cross-file jump with exact row/col math."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not in an Org mode buffer!"))
+  (unless (org-in-src-block-p)
+    (user-error "Not inside an Org source block!"))
+
+  (let* ((info (org-babel-get-src-block-info 'light))
+         (block-name (nth 4 info))
+         (src-id (save-excursion (ignore-errors (org-back-to-heading t) (org-id-get))))
+         (current-col (current-column))
+         (current-line (line-number-at-pos))
+         (src-head-pos (org-babel-where-is-src-block-head))
+         (head-line (save-excursion
+                      (goto-char src-head-pos)
+                      (line-number-at-pos)))
+         (line-offset (- current-line head-line))
+         (current-win (selected-window))
+         (source-buf (current-buffer))
+         target-buf target-pos)
+
+    ;; =======================================================
+    ;; STRATEGY 1: Memory Overlay Pointer Scan
+    ;; Emacs transclusion overlays MUST contain a marker pointing 
+    ;; back to the source file to know how to sync. We scan other 
+    ;; buffers to find any overlay pointing to our current file.
+    ;; =======================================================
+    (dolist (buf (buffer-list))
+      (when (and (not target-buf)
+                 (not (eq buf source-buf)) ; GUARANTEE a different file
+                 (with-current-buffer buf (derived-mode-p 'org-mode)))
+        (with-current-buffer buf
+          (dolist (ov (overlays-in (point-min) (point-max)))
+            (let ((props (overlay-properties ov))
+                  points-to-us)
+              (while props
+                (let ((val (cadr props)))
+                  ;; If the overlay has ANY property that is a marker pointing to our source file:
+                  (when (and (markerp val) (eq (marker-buffer val) source-buf))
+                    (setq points-to-us t)))
+                (setq props (cddr props)))
+              (when points-to-us
+                (setq target-buf buf
+                      target-pos (overlay-start ov))))))))
+
+    ;; =======================================================
+    ;; STRATEGY 2: Literal Text Fallback Scan
+    ;; If the overlay scan fails, we literally scan other org files 
+    ;; for `#+name: diagonal-matrix-class` (or whatever your block name is).
+    ;; =======================================================
+    (unless target-buf
+      (dolist (buf (buffer-list))
+        (when (and (not target-buf)
+                   (not (eq buf source-buf))
+                   (with-current-buffer buf (derived-mode-p 'org-mode)))
+          (with-current-buffer buf
+            (save-excursion
+              (goto-char (point-min))
+              (let ((case-fold-search t)
+                    (search-invisible t))
+                ;; Look for the rendered block name
+                (if (and block-name
+                         (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t))
+                    (setq target-buf buf
+                          target-pos (line-beginning-position))
+                  ;; Fallback to ID
+                  (goto-char (point-min))
+                  (when (and src-id
+                             (re-search-forward (format "%s" (regexp-quote src-id)) nil t))
+                    (setq target-buf buf
+                          target-pos (line-beginning-position))))))))))
+
+    ;; =======================================================
+    ;; THE JUMP AND THE MATH (Mirroring your original code)
+    ;; =======================================================
+    (unless (and target-buf target-pos (buffer-live-p target-buf))
+      (user-error "Could not find the destination clone in any other open buffer!"))
+
+    ;; 1. Bookmark cursor location for C-o
+    (evil-set-jump)
+
+    ;; 2. Force it into the exact current window (NO SPLITS)
+    (set-window-buffer current-win target-buf)
+    (select-window current-win)
+    (set-buffer target-buf)
+
+    ;; 3. Go to the general vicinity of the clone
+    (goto-char target-pos)
+
+    ;; 4. THE MATH ANCHOR
+    ;; We must establish the exact zero-line of the code block so the math works perfectly
+    (if (re-search-forward "^[ \t]*#\\+begin_src" nil t)
+        (progn
+          (beginning-of-line)
+          (forward-line line-offset)
+          (move-to-column current-col)
+          (recenter)
+          (message "Teleported to destination file! Zero splits, exact row/col."))
+      (message "Switched buffer, but could not locate #+begin_src for math anchor."))))
+
+;; Map to g c
+(evil-define-key 'normal 'global (kbd "g c") 'my/org-jump-source-to-transclusion)
+
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
 ;; ==========================================
