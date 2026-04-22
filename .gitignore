@@ -24,3 +24,4 @@ url/
 *.point
 speed-dial.sqlite
 full_history.txt
+ielm-history.eld

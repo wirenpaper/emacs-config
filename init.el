@@ -1143,36 +1143,227 @@
 
 (evil-define-key 'normal 'global (kbd "g c") 'my/org-jump-surface-up)
 
+(defun my/org-jump-to-beacon ()
+  "Jump directly to the transclusion homing beacon without math offsets.
+   Uses the exact pristine picker logic from g c."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not in an Org buffer!"))
+  (when (and (fboundp 'org-transclusion-within-transclusion-p)
+             (org-transclusion-within-transclusion-p))
+    (user-error "Already at the highest level (Transclusion)."))
+
+  (let* ((info (org-babel-get-src-block-info 'light))
+         (block-name (nth 4 info))
+         (src-id (save-excursion (ignore-errors (org-back-to-heading t) (org-id-get))))
+         (current-win (selected-window))
+         (source-buf (current-buffer))
+         (raw-matches '())
+         (all-matches '())
+         (seen-keys '()))
+
+    ;; ---------------------------------------------------
+    ;; Strategy 1: Hunt for homing beacons (YOUR EXACT LOGIC)
+    ;; ---------------------------------------------------
+    (dolist (buf (buffer-list))
+      (when (and (not (eq buf source-buf))
+                 (with-current-buffer buf (derived-mode-p 'org-mode)))
+        (with-current-buffer buf
+          (dolist (ov (overlays-in (point-min) (point-max)))
+            (when (overlay-get ov 'my-active-link-preview)
+              (let* ((beacon-pos (overlay-start ov))
+                     (beacon-text (buffer-substring-no-properties 
+                                   (overlay-start ov) 
+                                   (overlay-end ov))))
+                
+                (when (or (and src-id (string-match-p (regexp-quote src-id) beacon-text))
+                          (and block-name (string-match-p (regexp-quote block-name) beacon-text)))
+                  
+                  (let ((is-open nil))
+                    (save-excursion
+                      (goto-char beacon-pos)
+                      (when (re-search-forward "^[ \t]*#\\+begin_src" (+ beacon-pos 500) t)
+                        (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                                   (org-transclusion-within-transclusion-p))
+                          (setq is-open t))))
+                    
+                    (when is-open
+                      (push (list buf beacon-pos) raw-matches))))))))))
+
+    ;; ---------------------------------------------------
+    ;; Deduplicate raw-matches (YOUR EXACT LOGIC)
+    ;; ---------------------------------------------------
+    (dolist (match raw-matches)
+      (let* ((m-buf (car match))
+             (m-pos (cadr match))
+             (m-line (with-current-buffer m-buf
+                       (save-excursion
+                         (goto-char m-pos)
+                         (line-number-at-pos))))
+             (bucket (/ m-line 5))
+             (key (cons m-buf bucket)))
+        (unless (member key seen-keys)
+          (push key seen-keys)
+          (push match all-matches))))
+
+    ;; ---------------------------------------------------
+    ;; Strategy 2: Text Fallback (YOUR EXACT LOGIC)
+    ;; ---------------------------------------------------
+    (when (null all-matches)
+      (dolist (buf (buffer-list))
+        (when (and (not (eq buf source-buf))
+                   (with-current-buffer buf (derived-mode-p 'org-mode)))
+          (with-current-buffer buf
+            (let ((case-fold-search t) (search-invisible t))
+              (when block-name
+                (save-excursion
+                  (goto-char (point-min))
+                  (while (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
+                    (let ((pos (line-beginning-position)) (is-open nil))
+                      (save-excursion
+                        (goto-char pos)
+                        (when (re-search-forward "^[ \t]*#\\+begin_src" (+ pos 500) t)
+                          (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                                     (org-transclusion-within-transclusion-p))
+                            (setq is-open t))))
+                      (when is-open (push (list buf pos) all-matches))))))
+              (when src-id
+                (save-excursion
+                  (goto-char (point-min))
+                  (while (re-search-forward (regexp-quote src-id) nil t)
+                    (let ((pos (line-beginning-position)) (is-open nil))
+                      (save-excursion
+                        (goto-char pos)
+                        (when (re-search-forward "^[ \t]*#\\+begin_src" (+ pos 500) t)
+                          (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                                     (org-transclusion-within-transclusion-p))
+                            (setq is-open t))))
+                      (when is-open (push (list buf pos) all-matches)))))))))))
+
+    (unless all-matches
+      (user-error "Could not find any ACTIVE transclusion clones in open buffers!"))
+
+    (if (= (length all-matches) 1)
+
+        ;; -----------------------------------------------
+        ;; SINGLE MATCH: teleport directly NO MATH!
+        ;; -----------------------------------------------
+        (let* ((match (car all-matches))
+               (target-buf (car match))
+               (target-pos (cadr match)))
+          (evil-set-jump)
+          (set-window-buffer current-win target-buf)
+          (select-window current-win)
+          (set-buffer target-buf)
+          
+          ;; JUST DROP THE CURSOR AND RECENTER
+          (goto-char target-pos)
+          (recenter)
+          (message "Teleported directly to homing beacon!"))
+
+      ;; -----------------------------------------------
+      ;; MULTIPLE MATCHES: spawn pristine picker buffer
+      ;; -----------------------------------------------
+      (let ((picker-buf (get-buffer-create "*Org Transclusions*")))
+        (with-current-buffer picker-buf
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+
+            (dolist (match all-matches)
+              (let* ((m-buf  (car match))
+                     (m-pos  (cadr match))
+                     (m-file (or (buffer-file-name m-buf) (buffer-name m-buf)))
+                     (m-line (with-current-buffer m-buf
+                               (save-excursion
+                                 (goto-char m-pos)
+                                 (line-number-at-pos))))
+                     (m-text (with-current-buffer m-buf
+                               (save-excursion
+                                 (goto-char m-pos)
+                                 (buffer-substring-no-properties
+                                  (line-beginning-position)
+                                  (line-end-position))))))
+                (insert (propertize m-file 'font-lock-face 'compilation-info)
+                        ":"
+                        (propertize (number-to-string m-line) 'font-lock-face 'compilation-line-number)
+                        ":"
+                        m-text "\n")))
+
+            (special-mode)
+
+            (setq-local my/org-transclusion-jump-matches all-matches)
+            (setq-local my/org-transclusion-jump-source-win current-win)
+            
+            ;; THE NEW FLAG: Tell the picker to SKIP math
+            (setq-local my/org-transclusion-jump-no-math t)
+
+            (evil-local-set-key 'normal (kbd "RET") 'my/org-transclusion-picker-jump)
+            (evil-local-set-key 'motion (kbd "RET") 'my/org-transclusion-picker-jump)
+            (local-set-key (kbd "RET") 'my/org-transclusion-picker-jump)
+            (local-set-key (kbd "<return>") 'my/org-transclusion-picker-jump)
+
+            (goto-char (point-min))))
+
+        (switch-to-buffer picker-buf)
+        (delete-other-windows)
+        (message "Multiple active transclusions found (%d). Press RET to teleport." (length all-matches))))))
+
+;; Bind to Evil Ex-command
+(evil-ex-define-cmd "testjmp" 'my/org-jump-to-beacon)
+
+;; =====================================================================
+;; THE UPDATED HELPER FUNCTION (FIXED)
+;; =====================================================================
 (defun my/org-transclusion-picker-jump ()
   "Jump to the transclusion selected in the *Org Transclusions* picker."
   (interactive)
-  (let* ((matches     (buffer-local-value 'my/org-transclusion-jump-matches     (current-buffer)))
-         (line-offset (buffer-local-value 'my/org-transclusion-jump-line-offset (current-buffer)))
-         (col         (buffer-local-value 'my/org-transclusion-jump-col         (current-buffer)))
-         (source-win  (buffer-local-value 'my/org-transclusion-jump-source-win  (current-buffer)))
+  ;; Use `boundp` to safely read variables so it doesn't crash if they are missing
+  (let* ((matches     (and (boundp 'my/org-transclusion-jump-matches) 
+                           my/org-transclusion-jump-matches))
+         (line-offset (if (boundp 'my/org-transclusion-jump-line-offset) 
+                          my/org-transclusion-jump-line-offset 0)) ;; Default to 0
+         (col         (if (boundp 'my/org-transclusion-jump-col) 
+                          my/org-transclusion-jump-col 0))         ;; Default to 0
+         (source-win  (and (boundp 'my/org-transclusion-jump-source-win) 
+                           my/org-transclusion-jump-source-win))
+         (no-math     (and (boundp 'my/org-transclusion-jump-no-math) 
+                           my/org-transclusion-jump-no-math))
          (line-num    (line-number-at-pos))
          (match       (nth (1- line-num) matches)))
+    
     (unless match
       (user-error "No match on this line!"))
+      
     (let ((target-buf (car match))
           (target-pos (cadr match)))
       (unless (buffer-live-p target-buf)
         (user-error "Target buffer is no longer live!"))
+        
       (evil-set-jump)
+      
       (let ((win (if (window-live-p source-win) source-win (selected-window))))
         (set-window-buffer win target-buf)
         (select-window win)
         (set-buffer target-buf)
         (goto-char target-pos)
-        (if (re-search-forward "^[ \t]*#\\+begin_src" nil t)
+        
+        ;; DYNAMIC EXECUTION: Math (g c) vs No Math (:testjmp)
+        (if no-math
             (progn
-              (beginning-of-line)
-              (forward-line line-offset)
-              (move-to-column col)
               (recenter)
               (delete-other-windows)
-              (message "Teleported to transclusion! Zero splits."))
-          (message "Switched buffer, but could not locate #+begin_src."))))))
+              (message "Teleported directly to homing beacon!"))
+          
+          ;; Legacy behavior for 'g c'
+          (if (re-search-forward "^[ \t]*#\\+begin_src" nil t)
+              (progn
+                (beginning-of-line)
+                (forward-line line-offset)
+                (move-to-column col)
+                (recenter)
+                (delete-other-windows)
+                (message "Teleported to transclusion! Zero splits."))
+            (message "Switched buffer, but could not locate #+begin_src.")))))))
 
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
