@@ -901,7 +901,7 @@
 (defun my/org-jump-surface-up ()
   "Surface upward: Tangled Code -> Org Source Block -> Transclusion Clone.
    Maintains exact row/col persistence with absolutely no window splitting.
-   If multiple transclusions reference the same block, spawns a pristine picker."
+   Strictly filters out closed links and cross-line contamination."
   (interactive)
   (cond
    ;; =======================================================
@@ -970,8 +970,8 @@
            (seen-keys '()))
 
       ;; ---------------------------------------------------
-      ;; Strategy 1: Hunt for homing beacons (my-active-link-preview)
-      ;; Each beacon = one open transclusion of this block
+      ;; Strategy 1: Hunt for homing beacons
+      ;; STRICTLY filtered for matching text and OPEN state.
       ;; ---------------------------------------------------
       (dolist (buf (buffer-list))
         (when (and (not (eq buf source-buf))
@@ -980,19 +980,30 @@
             (dolist (ov (overlays-in (point-min) (point-max)))
               (when (overlay-get ov 'my-active-link-preview)
                 (let* ((beacon-pos (overlay-start ov))
-                       (beacon-text (buffer-substring-no-properties
-                                     (save-excursion
-                                       (goto-char beacon-pos)
-                                       (line-beginning-position))
-                                     (save-excursion
-                                       (goto-char beacon-pos)
-                                       (line-end-position)))))
-                  (push (list buf beacon-pos beacon-text) all-matches)))))))
+                       ;; FIX 1: Extract text ONLY from the exact bounds of the overlay!
+                       ;; This prevents cross-contamination if two links sit on the same line.
+                       (beacon-text (buffer-substring-no-properties 
+                                     (overlay-start ov) 
+                                     (overlay-end ov))))
+                  
+                  (when (or (and src-id (string-match-p (regexp-quote src-id) beacon-text))
+                            (and block-name (string-match-p (regexp-quote block-name) beacon-text)))
+                    
+                    ;; FIX 2: Verify it is OPEN (actively transcluding a source block)
+                    (let ((is-open nil))
+                      (save-excursion
+                        (goto-char beacon-pos)
+                        (when (re-search-forward "^[ \t]*#\\+begin_src" (+ beacon-pos 500) t)
+                          ;; Check if the begin_src block is actually inside a transclusion
+                          (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                                     (org-transclusion-within-transclusion-p))
+                            (setq is-open t))))
+                      
+                      (when is-open
+                        (push (list buf beacon-pos) raw-matches))))))))))
 
       ;; ---------------------------------------------------
-      ;; Deduplicate raw-matches by (buf . overlay-start)
-      ;; rounded to nearest 5 lines to catch same-transclusion
-      ;; overlays that land at slightly different positions
+      ;; Deduplicate raw-matches
       ;; ---------------------------------------------------
       (dolist (match raw-matches)
         (let* ((m-buf (car match))
@@ -1015,19 +1026,34 @@
           (when (and (not (eq buf source-buf))
                      (with-current-buffer buf (derived-mode-p 'org-mode)))
             (with-current-buffer buf
-              (save-excursion
-                (goto-char (point-min))
-                (let ((case-fold-search t) (search-invisible t))
-                  (cond
-                   ((and block-name
-                         (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t))
-                    (push (list buf (line-beginning-position)) all-matches))
-                   ((and src-id
-                         (re-search-forward (format "%s" (regexp-quote src-id)) nil t))
-                    (push (list buf (line-beginning-position)) all-matches)))))))))
+              (let ((case-fold-search t) (search-invisible t))
+                (when block-name
+                  (save-excursion
+                    (goto-char (point-min))
+                    (while (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
+                      (let ((pos (line-beginning-position)) (is-open nil))
+                        (save-excursion
+                          (goto-char pos)
+                          (when (re-search-forward "^[ \t]*#\\+begin_src" (+ pos 500) t)
+                            (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                                       (org-transclusion-within-transclusion-p))
+                              (setq is-open t))))
+                        (when is-open (push (list buf pos) all-matches))))))
+                (when src-id
+                  (save-excursion
+                    (goto-char (point-min))
+                    (while (re-search-forward (regexp-quote src-id) nil t)
+                      (let ((pos (line-beginning-position)) (is-open nil))
+                        (save-excursion
+                          (goto-char pos)
+                          (when (re-search-forward "^[ \t]*#\\+begin_src" (+ pos 500) t)
+                            (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                                       (org-transclusion-within-transclusion-p))
+                              (setq is-open t))))
+                        (when is-open (push (list buf pos) all-matches)))))))))))
 
       (unless all-matches
-        (user-error "Could not find any transclusion clone in any open buffer!"))
+        (user-error "Could not find any ACTIVE transclusion clones in open buffers!"))
 
       (if (= (length all-matches) 1)
 
@@ -1095,7 +1121,7 @@
 
           (switch-to-buffer picker-buf)
           (delete-other-windows)
-          (message "Multiple transclusions found (%d). Press RET to teleport." (length all-matches))))))))
+          (message "Multiple active transclusions found (%d). Press RET to teleport." (length all-matches))))))))
 
 (evil-define-key 'normal 'global (kbd "g c") 'my/org-jump-surface-up)
 
