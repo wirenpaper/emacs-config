@@ -1145,7 +1145,7 @@
 
 (defun my/org-jump-to-beacon ()
   "Jump directly to the transclusion homing beacon without math offsets.
-   Uses the exact pristine picker logic from g c."
+   Works for source blocks, pure prose, and file-level nodes."
   (interactive)
   (unless (derived-mode-p 'org-mode)
     (user-error "Not in an Org buffer!"))
@@ -1153,9 +1153,14 @@
              (org-transclusion-within-transclusion-p))
     (user-error "Already at the highest level (Transclusion)."))
 
-  (let* ((info (org-babel-get-src-block-info 'light))
-         (block-name (nth 4 info))
-         (src-id (save-excursion (ignore-errors (org-back-to-heading t) (org-id-get))))
+  (let* ((info (ignore-errors (org-babel-get-src-block-info 'light)))
+         (block-name (or (nth 4 info)
+                         (ignore-errors (org-element-property :name (org-element-at-point)))))
+         ;; FIXED ID EXTRACTION: Don't require a heading to exist (fixes file-level prose)
+         (src-id (or (org-id-get)
+                     (save-excursion 
+                       (ignore-errors (org-back-to-heading t))
+                       (org-id-get))))
          (current-win (selected-window))
          (source-buf (current-buffer))
          (raw-matches '())
@@ -1163,7 +1168,7 @@
          (seen-keys '()))
 
     ;; ---------------------------------------------------
-    ;; Strategy 1: Hunt for homing beacons (YOUR EXACT LOGIC)
+    ;; Strategy 1: Hunt for homing beacons
     ;; ---------------------------------------------------
     (dolist (buf (buffer-list))
       (when (and (not (eq buf source-buf))
@@ -1182,16 +1187,18 @@
                   (let ((is-open nil))
                     (save-excursion
                       (goto-char beacon-pos)
-                      (when (re-search-forward "^[ \t]*#\\+begin_src" (+ beacon-pos 500) t)
-                        (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                      (let ((limit (min (+ beacon-pos 500) (point-max))))
+                        (while (and (< (point) limit) (not is-open))
+                          (if (and (fboundp 'org-transclusion-within-transclusion-p)
                                    (org-transclusion-within-transclusion-p))
-                          (setq is-open t))))
+                              (setq is-open t)
+                            (forward-char 1)))))
                     
                     (when is-open
                       (push (list buf beacon-pos) raw-matches))))))))))
 
     ;; ---------------------------------------------------
-    ;; Deduplicate raw-matches (YOUR EXACT LOGIC)
+    ;; Deduplicate raw-matches
     ;; ---------------------------------------------------
     (dolist (match raw-matches)
       (let* ((m-buf (car match))
@@ -1207,7 +1214,7 @@
           (push match all-matches))))
 
     ;; ---------------------------------------------------
-    ;; Strategy 2: Text Fallback (YOUR EXACT LOGIC)
+    ;; Strategy 2: Text Fallback
     ;; ---------------------------------------------------
     (when (null all-matches)
       (dolist (buf (buffer-list))
@@ -1222,10 +1229,12 @@
                     (let ((pos (line-beginning-position)) (is-open nil))
                       (save-excursion
                         (goto-char pos)
-                        (when (re-search-forward "^[ \t]*#\\+begin_src" (+ pos 500) t)
-                          (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                        (let ((limit (min (+ pos 500) (point-max))))
+                          (while (and (< (point) limit) (not is-open))
+                            (if (and (fboundp 'org-transclusion-within-transclusion-p)
                                      (org-transclusion-within-transclusion-p))
-                            (setq is-open t))))
+                                (setq is-open t)
+                              (forward-char 1)))))
                       (when is-open (push (list buf pos) all-matches))))))
               (when src-id
                 (save-excursion
@@ -1234,10 +1243,12 @@
                     (let ((pos (line-beginning-position)) (is-open nil))
                       (save-excursion
                         (goto-char pos)
-                        (when (re-search-forward "^[ \t]*#\\+begin_src" (+ pos 500) t)
-                          (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                        (let ((limit (min (+ pos 500) (point-max))))
+                          (while (and (< (point) limit) (not is-open))
+                            (if (and (fboundp 'org-transclusion-within-transclusion-p)
                                      (org-transclusion-within-transclusion-p))
-                            (setq is-open t))))
+                                (setq is-open t)
+                              (forward-char 1)))))
                       (when is-open (push (list buf pos) all-matches)))))))))))
 
     (unless all-matches
@@ -1256,7 +1267,6 @@
           (select-window current-win)
           (set-buffer target-buf)
           
-          ;; JUST DROP THE CURSOR AND RECENTER
           (goto-char target-pos)
           (recenter)
           (message "Teleported directly to homing beacon!"))
@@ -1294,7 +1304,6 @@
             (setq-local my/org-transclusion-jump-matches all-matches)
             (setq-local my/org-transclusion-jump-source-win current-win)
             
-            ;; THE NEW FLAG: Tell the picker to SKIP math
             (setq-local my/org-transclusion-jump-no-math t)
 
             (evil-local-set-key 'normal (kbd "RET") 'my/org-transclusion-picker-jump)
