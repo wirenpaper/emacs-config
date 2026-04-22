@@ -9,4 +9,4 @@
 
 (if (display-graphic-p)
     (load-theme 'ef-light t)   ;; GUI gets the light theme
-  (load-theme 'ef-dark t))     ;; Terminal (-nw) gets the dark theme
+  (load-theme 'ef-bio t))     ;; Terminal (-nw) gets the dark theme
