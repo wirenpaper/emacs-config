@@ -497,9 +497,8 @@
 (add-hook 'kill-buffer-hook #'my/org-transclusion-cleanup-ephemera)
 
 (defun my/org-transclusion-toggle ()
-  "Smart K toggle. Opens blocks normally, or
-   creates temporary vanishing previews for inline links.
-   Bulletproof version: perfectly hugs the code and stops fringe bleed."
+  "Smart K toggle. Opens blocks normally, or creates temporary inline previews.
+   3-State Inline Cycle: [1] Standard -> [2] Hidden Wrappers -> [3] Closed."
   (interactive)
   (let* ((context (org-element-context))
          (type (car context))
@@ -507,7 +506,8 @@
          
     (cond
      ;; =======================================================
-     ;; 1. Inside an expanded block -> Close it & TELEPORT BACK!
+     ;; CASE 1: Inside an expanded block -> Close it & TELEPORT BACK!
+     ;; (Acts as an instant reset back to State 0)
      ;; =======================================================
      (in-transclusion
       (org-transclusion-remove)
@@ -517,7 +517,7 @@
         
         (let ((jump-pos nil)
               (was-modified (buffer-modified-p)))
-          ;; Find the red homing beacon
+          ;; Find the red homing beacon and delete it
           (dolist (ov (overlays-in (line-beginning-position 0) (line-end-position 0)))
             (when (overlay-get ov 'my-active-link-preview)
               (setq jump-pos (overlay-start ov))
@@ -533,99 +533,112 @@
       (message "Transclusion closed"))
       
      ;; =======================================================
-     ;; 2. On a hard-coded `#+transclude:` line -> Open normally
+     ;; CASE 2: On a hard-coded `#+transclude:` line -> Toggle normally
      ;; =======================================================
      ((save-excursion
         (beginning-of-line)
         (looking-at "^[ \t]*#\\+transclude:"))
       (org-transclusion-add)
-      (message "Transclusion opened"))
+      (message "Transclusion toggled"))
 
      ;; =======================================================
-     ;; 3. On an inline link -> Toggle Temporary Preview Below!
+     ;; CASE 3: On an inline link -> The 3-State Cycle!
      ;; =======================================================
      ((eq type 'link)
-      (let ((closed-temp-p nil)
-            (beg (org-element-property :begin context))
-            (end (org-element-property :end context)))
+      (let* ((beg (org-element-property :begin context))
+             (end (org-element-property :end context))
+             (tracker-ov nil))
+             
+        ;; Locate our tracking beacon (if it exists)
+        (dolist (ov (overlays-at beg))
+          (when (overlay-get ov 'my-active-link-preview)
+            (setq tracker-ov ov)))
             
-        (save-excursion
-          (end-of-line)
-          (when (get-text-property (point) 'my-inline-preview)
-            (setq closed-temp-p t)
-            
-            (remove-overlays (line-beginning-position) (line-end-position) 'my-active-link-preview t)
-            
-            (forward-char 1)
-            (when (org-transclusion-within-transclusion-p)
-              (org-transclusion-remove))
-              
-            (let ((was-modified (buffer-modified-p)))
-              (delete-region (1- (line-beginning-position)) (line-end-position))
-              (set-buffer-modified-p was-modified))))
-              
-        (if closed-temp-p
-            (message "Inline preview closed")
+        ;; Read the state from the beacon (defaults to 'closed)
+        (let ((state (if tracker-ov (overlay-get tracker-ov 'my-preview-state) 'closed)))
           
-          ;; Otherwise, create and open it
-          (let ((link-str (buffer-substring-no-properties beg end)))
-            
-            ;; TURN LINK RED
-            (let ((ov (make-overlay beg end)))
-              (overlay-put ov 'face '(:foreground "red" :weight bold))
-              (overlay-put ov 'my-active-link-preview t))
-              
+          (cond
+           ;; ---------------------------------------------------------
+           ;; STATE 0 -> STATE 1: Open Standard
+           ;; ---------------------------------------------------------
+           ((eq state 'closed)
+            (let ((link-str (buffer-substring-no-properties beg end)))
+              ;; Turn link red and set memory to 'standard
+              (let ((ov (make-overlay beg end)))
+                (overlay-put ov 'face '(:foreground "red" :weight bold))
+                (overlay-put ov 'my-active-link-preview t)
+                (overlay-put ov 'my-preview-state 'standard)
+                (setq tracker-ov ov))
+                
+              (save-excursion
+                (end-of-line)
+                (let ((insert-pos (point))
+                      (was-modified (buffer-modified-p)))
+                  
+                  (insert "\n#+transclude: " link-str)
+                  (put-text-property insert-pos (point) 'my-inline-preview t)
+                  
+                  (goto-char (1+ insert-pos))
+                  (condition-case err
+                      (progn
+                        (org-transclusion-add)
+                        (message "Inline preview: [1/3] Standard Mode"))
+                    (error
+                     (delete-region insert-pos (line-end-position))
+                     (delete-overlay tracker-ov)
+                     (message "Could not transclude link: %s" (error-message-string err))))
+                     
+                  (set-buffer-modified-p was-modified)))))
+
+           ;; ---------------------------------------------------------
+           ;; STATE 1 -> STATE 2: Open Hidden (Apply invisible wrappers)
+           ;; ---------------------------------------------------------
+           ((eq state 'standard)
+            ;; Update memory to 'hidden
+            (overlay-put tracker-ov 'my-preview-state 'hidden)
             (save-excursion
               (end-of-line)
               (let ((insert-pos (point))
-                    (pmax-before (point-max))
                     (was-modified (buffer-modified-p)))
-                
-                ;; Insert normally so Org sees it
-                (insert "\n#+transclude: " link-str)
-                (put-text-property insert-pos (point) 'my-inline-preview t)
-                
                 (goto-char (1+ insert-pos))
-                (condition-case err
-                    (progn
-                      (org-transclusion-add)
+                
+                (let ((search-bound (+ (point) 10000)))
+                  ;; Hunt for top
+                  (when (re-search-forward "^[ \t]*#\\+begin_src.*?\n" search-bound t)
+                    (let ((hide-top (make-overlay (1+ insert-pos) (point))))
+                      (overlay-put hide-top 'invisible t)
+                      (overlay-put hide-top 'evaporate t)))
                       
-                      ;; ---------------------------------------------------------
-                      ;; BULLETPROOF WRAPPER HIDING LOGIC
-                      ;; ---------------------------------------------------------
-                      (let* ((chars-added (- (point-max) pmax-before))
-                             (tc-end (+ (point) chars-added 50)))
-                        
-                        (save-excursion
-                          (goto-char insert-pos)
-                          
-                          ;; 1. Hunt for the start of the source block
-                          (when (re-search-forward "^[ \t]*#\\+begin_src.*?\n" tc-end t)
-                            (let ((hide-top (make-overlay (1+ insert-pos) (point))))
-                              (overlay-put hide-top 'invisible t)
-                              (overlay-put hide-top 'evaporate t)))
-                              
-                          ;; 2. Hunt for the end of the source block
-                          (when (re-search-forward "^[ \t]*#\\+end_src" tc-end t)
-                            ;; THE FIX: (1- (match-beginning 0)) grabs the preceding newline
-                            ;; so the gray box hugs the code tightly. (line-end-position) stops the bleed.
-                            (let* ((start-hide (max (point-min) (1- (match-beginning 0))))
-                                   (hide-bot (make-overlay start-hide (line-end-position))))
-                              (overlay-put hide-bot 'invisible t)
-                              (overlay-put hide-bot 'evaporate t)))))
-                      ;; ---------------------------------------------------------
+                  ;; Hunt for bottom
+                  (when (re-search-forward "^[ \t]*#\\+end_src" search-bound t)
+                    (let* ((start-hide (max (point-min) (1- (match-beginning 0))))
+                           (hide-bot (make-overlay start-hide (line-end-position))))
+                      (overlay-put hide-bot 'invisible t)
+                      (overlay-put hide-bot 'evaporate t))))
                       
-                      (message "Inline preview opened"))
-                  (error
-                   (delete-region insert-pos (line-end-position))
-                   (remove-overlays beg end 'my-active-link-preview t)
-                   (message "Could not transclude link: %s" (error-message-string err))))
-                   
-                ;; Instantly revert the buffer's "modified" status so Emacs doesn't ask you to save
-                (set-buffer-modified-p was-modified)))))))
+                (set-buffer-modified-p was-modified)))
+            (message "Inline preview: [2/3] Hidden Mode"))
+
+           ;; ---------------------------------------------------------
+           ;; STATE 2 -> STATE 0: Closed
+           ;; ---------------------------------------------------------
+           ((eq state 'hidden)
+            (save-excursion
+              (end-of-line)
+              (forward-char 1)
+              (when (org-transclusion-within-transclusion-p)
+                (org-transclusion-remove))
+                
+              (let ((was-modified (buffer-modified-p)))
+                (delete-region (1- (line-beginning-position)) (line-end-position))
+                (set-buffer-modified-p was-modified)))
+                
+            ;; Destroy the beacon to reset the cycle completely
+            (delete-overlay tracker-ov)
+            (message "Inline preview: [3/3] Closed"))))))
 
      ;; =======================================================
-     ;; 4. Fallback
+     ;; CASE 4: Fallback
      ;; =======================================================
      (t
       (message "Not on a transclude line, link, or inside one!")))))
