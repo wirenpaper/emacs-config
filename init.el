@@ -1143,9 +1143,40 @@
 
 (evil-define-key 'normal 'global (kbd "g c") 'my/org-jump-surface-up)
 
+;; =====================================================================
+;; 1. THE SMART DISPATCHER (Bound to :testjmp)
+;; =====================================================================
 (defun my/org-jump-to-beacon ()
+  "Smart jump to transclusion homing beacon.
+   Automatically routes to src-block logic or prose logic based on context."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not in an Org buffer!"))
+  (when (and (fboundp 'org-transclusion-within-transclusion-p)
+             (org-transclusion-within-transclusion-p))
+    (user-error "Already at the highest level (Transclusion)."))
+
+  ;; Check if we are inside or on a source block
+  (let ((element-type (ignore-errors (car (org-element-at-point)))))
+    (if (or (ignore-errors (org-babel-get-src-block-info 'light))
+            (eq element-type 'src-block))
+        (progn
+          (message "Source block detected. Routing to src-block jumper...")
+          (my/org-jump-to-beacon-src))
+      (progn
+        (message "Prose detected. Routing to prose jumper...")
+        (my/org-jump-to-beacon-prose)))))
+
+;; Bind to Evil Ex-command (Use this for everything now)
+(evil-ex-define-cmd "testjmp" 'my/org-jump-to-beacon)
+
+
+;; =====================================================================
+;; 2. YOUR ORIGINAL SOURCE-BLOCK LOGIC (Renamed to -src)
+;; =====================================================================
+(defun my/org-jump-to-beacon-src ()
   "Jump directly to the transclusion homing beacon without math offsets.
-   Works for source blocks, pure prose, and file-level nodes."
+   Works for source blocks."
   (interactive)
   (unless (derived-mode-p 'org-mode)
     (user-error "Not in an Org buffer!"))
@@ -1317,11 +1348,9 @@
         (delete-other-windows)
         (message "Multiple active transclusions found (%d). Press RET to teleport." (length all-matches))))))
 
-;; Bind to Evil Ex-command
-(evil-ex-define-cmd "testjmp" 'my/org-jump-to-beacon)
 
 ;; =====================================================================
-;; THE UPDATED HELPER FUNCTION (FIXED)
+;; 3. YOUR ORIGINAL SRC-BLOCK HELPER
 ;; =====================================================================
 (defun my/org-transclusion-picker-jump ()
   "Jump to the transclusion selected in the *Org Transclusions* picker."
@@ -1374,6 +1403,10 @@
                 (message "Teleported to transclusion! Zero splits."))
             (message "Switched buffer, but could not locate #+begin_src.")))))))
 
+
+;; =====================================================================
+;; 4. THE PROSE LOGIC
+;; =====================================================================
 (defun my/org-jump-to-beacon-prose ()
   "Jump directly to the transclusion homing beacon for PROSE.
    Works for pure prose and file-level nodes."
@@ -1540,7 +1573,7 @@
 
 
 ;; =====================================================================
-;; THE ISOLATED PROSE PICKER JUMP
+;; 5. THE PROSE HELPER
 ;; =====================================================================
 (defun my/org-transclusion-picker-jump-prose ()
   "Jump to the prose transclusion selected in the *Org Transclusions Prose* picker."
@@ -1573,9 +1606,6 @@
         (recenter)
         (delete-other-windows)
         (message "Teleported directly to prose transclusion!")))))
-
-;; Bind to Evil Ex-command
-(evil-ex-define-cmd "testjmpprose" 'my/org-jump-to-beacon-prose)
 
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
