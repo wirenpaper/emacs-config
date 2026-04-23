@@ -606,7 +606,8 @@
 (defun my/org-transclusion-toggle ()
   "Smart K toggle. 
    Code blocks: [1] Open -> [2] Hide Wrappers -> [3] Close
-   Prose notes: [1] Open -> [2] Close"
+   Prose notes: [1] Open -> [2] Close
+   Beacons: [1] Active -> [2] Off"
   (interactive)
   (let* ((context (org-element-context))
          (type (car context))
@@ -646,7 +647,7 @@
       (message "Transclusion toggled"))
 
      ;; =======================================================
-     ;; CASE 3: On an inline link -> Dynamic Cycle!
+     ;; CASE 3: On an inline link -> Dynamic Cycle (or Beacon Kill)
      ;; =======================================================
      ((eq type 'link)
       (let* ((beg (org-element-property :begin context))
@@ -747,7 +748,23 @@
                 (set-buffer-modified-p was-modified)))
                 
             (delete-overlay tracker-ov)
-            (message "Inline preview: [3/3] Closed"))))))
+            (message "Inline preview: [3/3] Closed"))
+
+           ;; ---------------------------------------------------------
+           ;; STATE BEACON -> STATE 0: Turn off beacon
+           ;; ---------------------------------------------------------
+           ((eq state 'beacon-hidden)
+            (save-excursion
+              (goto-char beg)
+              (end-of-line)
+              (forward-char 1)
+              (when (org-transclusion-within-transclusion-p)
+                (org-transclusion-remove))
+              (let ((was-modified (buffer-modified-p)))
+                (delete-region (1- (line-beginning-position)) (line-end-position))
+                (set-buffer-modified-p was-modified)))
+            (delete-overlay tracker-ov)
+            (message "Beacon deactivated (Toggled via K)."))))))
 
      ;; =======================================================
      ;; CASE 4: Fallback
