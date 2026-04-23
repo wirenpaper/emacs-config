@@ -1081,7 +1081,6 @@
   (cond
    ;; =======================================================
    ;; CASE 1: In a Tangled File -> Jump up to Org Source
-   ;; (Runs FIRST, so it never gets hijacked by an active beacon elsewhere)
    ;; =======================================================
    ((not (derived-mode-p 'org-mode))
     (let ((current-win (selected-window))
@@ -1140,28 +1139,10 @@
              nil)))
 
       (if beacon-ov
-          ;; -> BEACON DETECTED: Exclusively use testjmp, then turn off the beacon
+          ;; -> BEACON DETECTED: Route to dispatcher (Kill logic handles it on landing)
           (progn
             (message "Homing beacon active! Routing to dispatcher...")
-            (my/org-jump-to-beacon)
-            
-            ;; Switch it off securely
-            (when (overlay-buffer beacon-ov)
-              (with-current-buffer (overlay-buffer beacon-ov)
-                (let ((inhibit-read-only t))
-                  (save-excursion
-                    (goto-char (overlay-start beacon-ov))
-                    (end-of-line)
-                    (forward-char 1)
-                    (ignore-errors
-                      (when (and (fboundp 'org-transclusion-within-transclusion-p)
-                                 (org-transclusion-within-transclusion-p))
-                        (org-transclusion-remove)))
-                    (let ((was-modified (buffer-modified-p)))
-                      (ignore-errors
-                        (delete-region (1- (line-beginning-position)) (line-end-position)))
-                      (set-buffer-modified-p was-modified))))
-                (delete-overlay beacon-ov))))
+            (my/org-jump-to-beacon))
 
         ;; -> NORMAL BEHAVIOR: Execute your exact original math
         (if (not (org-in-src-block-p))
@@ -1274,6 +1255,28 @@
                   (select-window current-win)
                   (set-buffer target-buf)
                   (goto-char target-pos)
+                  
+                  ;; ---> LANDING SPOT 1: KILL BEACON <---
+                  (let ((landed-ov nil))
+                    (dolist (ov (overlays-at target-pos))
+                      (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
+                        (setq landed-ov ov)))
+                    (when landed-ov
+                      (let ((inhibit-read-only t))
+                        (save-excursion
+                          (goto-char target-pos)
+                          (end-of-line)
+                          (forward-char 1)
+                          (ignore-errors
+                            (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                                       (org-transclusion-within-transclusion-p))
+                              (org-transclusion-remove)))
+                          (let ((was-modified (buffer-modified-p)))
+                            (ignore-errors (delete-region (1- (line-beginning-position)) (line-end-position)))
+                            (set-buffer-modified-p was-modified))))
+                      (delete-overlay landed-ov)
+                      (message "Beacon deactivated at landing site!")))
+                  
                   (if (re-search-forward "^[ \t]*#\\+begin_src" nil t)
                       (progn
                         (beginning-of-line)
@@ -1353,7 +1356,6 @@
         (message "Prose detected. Routing to prose jumper...")
         (my/org-jump-to-beacon-prose)))))
 
-;; Bind to Evil Ex-command (Use this for everything now)
 (evil-ex-define-cmd "testjmp" 'my/org-jump-to-beacon)
 
 
@@ -1361,8 +1363,7 @@
 ;; 2. YOUR ORIGINAL SOURCE-BLOCK LOGIC (Renamed to -src)
 ;; =====================================================================
 (defun my/org-jump-to-beacon-src ()
-  "Jump directly to the transclusion homing beacon without math offsets.
-   Works for source blocks."
+  "Jump directly to the transclusion homing beacon without math offsets."
   (interactive)
   (unless (derived-mode-p 'org-mode)
     (user-error "Not in an Org buffer!"))
@@ -1373,7 +1374,6 @@
   (let* ((info (ignore-errors (org-babel-get-src-block-info 'light)))
          (block-name (or (nth 4 info)
                          (ignore-errors (org-element-property :name (org-element-at-point)))))
-         ;; FIXED ID EXTRACTION: Don't require a heading to exist (fixes file-level prose)
          (src-id (or (org-id-get)
                      (save-excursion 
                        (ignore-errors (org-back-to-heading t))
@@ -1384,9 +1384,6 @@
          (all-matches '())
          (seen-keys '()))
 
-    ;; ---------------------------------------------------
-    ;; Strategy 1: Hunt for homing beacons
-    ;; ---------------------------------------------------
     (dolist (buf (buffer-list))
       (when (and (not (eq buf source-buf))
                  (with-current-buffer buf (derived-mode-p 'org-mode)))
@@ -1414,9 +1411,6 @@
                     (when is-open
                       (push (list buf beacon-pos) raw-matches))))))))))
 
-    ;; ---------------------------------------------------
-    ;; Deduplicate raw-matches
-    ;; ---------------------------------------------------
     (dolist (match raw-matches)
       (let* ((m-buf (car match))
              (m-pos (cadr match))
@@ -1430,9 +1424,6 @@
           (push key seen-keys)
           (push match all-matches))))
 
-    ;; ---------------------------------------------------
-    ;; Strategy 2: Text Fallback
-    ;; ---------------------------------------------------
     (when (null all-matches)
       (dolist (buf (buffer-list))
         (when (and (not (eq buf source-buf))
@@ -1485,6 +1476,28 @@
           (set-buffer target-buf)
           
           (goto-char target-pos)
+          
+          ;; ---> LANDING SPOT 2: KILL BEACON <---
+          (let ((landed-ov nil))
+            (dolist (ov (overlays-at target-pos))
+              (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
+                (setq landed-ov ov)))
+            (when landed-ov
+              (let ((inhibit-read-only t))
+                (save-excursion
+                  (goto-char target-pos)
+                  (end-of-line)
+                  (forward-char 1)
+                  (ignore-errors
+                    (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                               (org-transclusion-within-transclusion-p))
+                      (org-transclusion-remove)))
+                  (let ((was-modified (buffer-modified-p)))
+                    (ignore-errors (delete-region (1- (line-beginning-position)) (line-end-position)))
+                    (set-buffer-modified-p was-modified))))
+              (delete-overlay landed-ov)
+              (message "Beacon deactivated at landing site!")))
+              
           (recenter)
           (message "Teleported directly to homing beacon!"))
 
@@ -1520,7 +1533,6 @@
 
             (setq-local my/org-transclusion-jump-matches all-matches)
             (setq-local my/org-transclusion-jump-source-win current-win)
-            
             (setq-local my/org-transclusion-jump-no-math t)
 
             (evil-local-set-key 'normal (kbd "RET") 'my/org-transclusion-picker-jump)
@@ -1534,20 +1546,18 @@
         (delete-other-windows)
         (message "Multiple active transclusions found (%d). Press RET to teleport." (length all-matches))))))
 
-
 ;; =====================================================================
-;; 3. YOUR ORIGINAL SRC-BLOCK HELPER
+;; 3. YOUR ORIGINAL SRC-BLOCK HELPER (Picker)
 ;; =====================================================================
 (defun my/org-transclusion-picker-jump ()
   "Jump to the transclusion selected in the *Org Transclusions* picker."
   (interactive)
-  ;; Use `boundp` to safely read variables so it doesn't crash if they are missing
   (let* ((matches     (and (boundp 'my/org-transclusion-jump-matches) 
                            my/org-transclusion-jump-matches))
          (line-offset (if (boundp 'my/org-transclusion-jump-line-offset) 
-                          my/org-transclusion-jump-line-offset 0)) ;; Default to 0
+                          my/org-transclusion-jump-line-offset 0)) 
          (col         (if (boundp 'my/org-transclusion-jump-col) 
-                          my/org-transclusion-jump-col 0))         ;; Default to 0
+                          my/org-transclusion-jump-col 0))         
          (source-win  (and (boundp 'my/org-transclusion-jump-source-win) 
                            my/org-transclusion-jump-source-win))
          (no-math     (and (boundp 'my/org-transclusion-jump-no-math) 
@@ -1571,6 +1581,27 @@
         (set-buffer target-buf)
         (goto-char target-pos)
         
+        ;; ---> LANDING SPOT 3: KILL BEACON <---
+        (let ((landed-ov nil))
+          (dolist (ov (overlays-at target-pos))
+            (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
+              (setq landed-ov ov)))
+          (when landed-ov
+            (let ((inhibit-read-only t))
+              (save-excursion
+                (goto-char target-pos)
+                (end-of-line)
+                (forward-char 1)
+                (ignore-errors
+                  (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                             (org-transclusion-within-transclusion-p))
+                    (org-transclusion-remove)))
+                (let ((was-modified (buffer-modified-p)))
+                  (ignore-errors (delete-region (1- (line-beginning-position)) (line-end-position)))
+                  (set-buffer-modified-p was-modified))))
+            (delete-overlay landed-ov)
+            (message "Beacon deactivated at landing site!")))
+
         ;; DYNAMIC EXECUTION: Math (g c) vs No Math (:testjmp)
         (if no-math
             (progn
@@ -1594,8 +1625,7 @@
 ;; 4. THE PROSE LOGIC
 ;; =====================================================================
 (defun my/org-jump-to-beacon-prose ()
-  "Jump directly to the transclusion homing beacon for PROSE.
-   Works for pure prose and file-level nodes."
+  "Jump directly to the transclusion homing beacon for PROSE."
   (interactive)
   (unless (derived-mode-p 'org-mode)
     (user-error "Not in an Org buffer!"))
@@ -1603,7 +1633,6 @@
              (org-transclusion-within-transclusion-p))
     (user-error "Already at the highest level (Transclusion)."))
 
-  ;; EXTRACT ALL POSSIBLE IDENTIFIERS (IDs, Names, and Heading Titles)
   (let* ((block-name (ignore-errors (org-element-property :name (org-element-at-point))))
          (src-id (or (org-id-get)
                      (save-excursion 
@@ -1618,9 +1647,6 @@
          (all-matches '())
          (seen-keys '()))
 
-    ;; ---------------------------------------------------
-    ;; Strategy 1: Hunt for homing beacons (Overlays)
-    ;; ---------------------------------------------------
     (dolist (buf (buffer-list))
       (when (and (not (eq buf source-buf))
                  (with-current-buffer buf (derived-mode-p 'org-mode)))
@@ -1632,12 +1658,10 @@
                                    (overlay-start ov) 
                                    (overlay-end ov))))
                 
-                ;; Match ANY of the valid prose identifiers
                 (when (or (and src-id (string-match-p (regexp-quote src-id) beacon-text))
                           (and block-name (string-match-p (regexp-quote block-name) beacon-text))
                           (and heading-title (string-match-p (regexp-quote heading-title) beacon-text)))
                   
-                  ;; Deduplicate by EXACT line (Fixes the 5-line bucket bug)
                   (let* ((m-line (line-number-at-pos beacon-pos))
                          (key (cons buf m-line)))
                     (unless (member key seen-keys)
@@ -1655,17 +1679,12 @@
                           (push key seen-keys)
                           (push (list buf beacon-pos) all-matches))))))))))))
 
-    ;; ---------------------------------------------------
-    ;; Strategy 2: Text Fallback 
-    ;; ---------------------------------------------------
     (when (null all-matches)
       (dolist (buf (buffer-list))
         (when (and (not (eq buf source-buf))
                    (with-current-buffer buf (derived-mode-p 'org-mode)))
           (with-current-buffer buf
             (let ((case-fold-search t) (search-invisible t))
-              
-              ;; Search for any of our identifiers in the buffer text
               (let ((search-targets (delq nil (list block-name src-id heading-title))))
                 (dolist (target search-targets)
                   (save-excursion
@@ -1674,8 +1693,6 @@
                       (let* ((pos (line-beginning-position))
                              (m-line (line-number-at-pos pos))
                              (key (cons buf m-line)))
-                        
-                        ;; Deduplicate exact line so we don't log it twice if heading and ID both match
                         (unless (member key seen-keys)
                           (let ((is-open nil))
                             (save-excursion
@@ -1708,12 +1725,32 @@
           (set-buffer target-buf)
           
           (goto-char target-pos)
+          
+          ;; ---> LANDING SPOT 4: KILL BEACON <---
+          (let ((landed-ov nil))
+            (dolist (ov (overlays-at target-pos))
+              (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
+                (setq landed-ov ov)))
+            (when landed-ov
+              (let ((inhibit-read-only t))
+                (save-excursion
+                  (goto-char target-pos)
+                  (end-of-line)
+                  (forward-char 1)
+                  (ignore-errors
+                    (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                               (org-transclusion-within-transclusion-p))
+                      (org-transclusion-remove)))
+                  (let ((was-modified (buffer-modified-p)))
+                    (ignore-errors (delete-region (1- (line-beginning-position)) (line-end-position)))
+                    (set-buffer-modified-p was-modified))))
+              (delete-overlay landed-ov)
+              (message "Beacon deactivated at landing site!")))
+          
           (recenter)
           (message "Teleported directly to single prose transclusion!"))
 
-      ;; -----------------------------------------------
       ;; MULTIPLE MATCHES: Spawn pristine prose picker
-      ;; -----------------------------------------------
       (let ((picker-buf (get-buffer-create "*Org Transclusions Prose*")))
         (with-current-buffer picker-buf
           (let ((inhibit-read-only t))
@@ -1741,11 +1778,9 @@
 
             (special-mode)
 
-            ;; Use isolated prose variables
             (setq-local my/org-transclusion-prose-jump-matches all-matches)
             (setq-local my/org-transclusion-prose-jump-source-win current-win)
 
-            ;; Bind local keys to the isolated prose picker
             (evil-local-set-key 'normal (kbd "RET") 'my/org-transclusion-picker-jump-prose)
             (evil-local-set-key 'motion (kbd "RET") 'my/org-transclusion-picker-jump-prose)
             (local-set-key (kbd "RET") 'my/org-transclusion-picker-jump-prose)
@@ -1757,14 +1792,12 @@
         (delete-other-windows)
         (message "Multiple active prose transclusions found (%d). Press RET to teleport." (length all-matches))))))
 
-
 ;; =====================================================================
-;; 5. THE PROSE HELPER
+;; 5. THE PROSE HELPER (Picker)
 ;; =====================================================================
 (defun my/org-transclusion-picker-jump-prose ()
-  "Jump to the prose transclusion selected in the *Org Transclusions Prose* picker."
+  "Jump to the prose transclusion selected in the picker."
   (interactive)
-  ;; Reads the isolated prose variables
   (let* ((matches    (and (boundp 'my/org-transclusion-prose-jump-matches) 
                           my/org-transclusion-prose-jump-matches))
          (source-win (and (boundp 'my/org-transclusion-prose-jump-source-win) 
@@ -1788,7 +1821,27 @@
         (set-buffer target-buf)
         (goto-char target-pos)
         
-        ;; Execute the jump immediately. No fallback src-block math needed.
+        ;; ---> LANDING SPOT 5: KILL BEACON <---
+        (let ((landed-ov nil))
+          (dolist (ov (overlays-at target-pos))
+            (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
+              (setq landed-ov ov)))
+          (when landed-ov
+            (let ((inhibit-read-only t))
+              (save-excursion
+                (goto-char target-pos)
+                (end-of-line)
+                (forward-char 1)
+                (ignore-errors
+                  (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                             (org-transclusion-within-transclusion-p))
+                    (org-transclusion-remove)))
+                (let ((was-modified (buffer-modified-p)))
+                  (ignore-errors (delete-region (1- (line-beginning-position)) (line-end-position)))
+                  (set-buffer-modified-p was-modified))))
+            (delete-overlay landed-ov)
+            (message "Beacon deactivated at landing site!")))
+            
         (recenter)
         (delete-other-windows)
         (message "Teleported directly to prose transclusion!")))))
