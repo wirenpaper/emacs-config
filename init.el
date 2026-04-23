@@ -1028,7 +1028,7 @@
    Maintains exact row/col persistence with absolutely no window splitting.
    If a beacon is secretly active, exclusively uses the smart dispatcher."
   (interactive)
-  (let ((beacon-active-p
+  (let ((beacon-ov
          (catch 'found-beacon
            (dolist (buf (buffer-list))
              (when (buffer-live-p buf)
@@ -1037,14 +1037,32 @@
                    (dolist (ov (overlays-in (point-min) (point-max)))
                      ;; Specifically check for the beacon state, ignoring K toggles
                      (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
-                       (throw 'found-beacon t)))))))
+                       (throw 'found-beacon ov)))))))
            nil)))
 
-    (if beacon-active-p
-        ;; -> BEACON DETECTED: Exclusively use testjmp
+    (if beacon-ov
+        ;; -> BEACON DETECTED: Exclusively use testjmp, then turn off the beacon
         (progn
           (message "Homing beacon active! Routing to dispatcher...")
-          (my/org-jump-to-beacon))
+          (my/org-jump-to-beacon)
+          
+          ;; Switch it off securely
+          (when (overlay-buffer beacon-ov)
+            (with-current-buffer (overlay-buffer beacon-ov)
+              (let ((inhibit-read-only t))
+                (save-excursion
+                  (goto-char (overlay-start beacon-ov))
+                  (end-of-line)
+                  (forward-char 1)
+                  (ignore-errors
+                    (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                               (org-transclusion-within-transclusion-p))
+                      (org-transclusion-remove)))
+                  (let ((was-modified (buffer-modified-p)))
+                    (ignore-errors
+                      (delete-region (1- (line-beginning-position)) (line-end-position)))
+                    (set-buffer-modified-p was-modified))))
+              (delete-overlay beacon-ov))))
 
       ;; -> NORMAL BEHAVIOR: Execute your exact original cond block
       (cond
@@ -1151,13 +1169,13 @@
             ;; Deduplicate raw-matches
             (dolist (match raw-matches)
               (let* ((m-buf (car match))
-                     (m-pos (cadr match))
-                     (m-line (with-current-buffer m-buf
-                               (save-excursion
-                                 (goto-char m-pos)
-                                 (line-number-at-pos))))
-                     (bucket (/ m-line 5))
-                     (key (cons m-buf bucket)))
+                 (m-pos (cadr match))
+                 (m-line (with-current-buffer m-buf
+                           (save-excursion
+                             (goto-char m-pos)
+                             (line-number-at-pos))))
+                 (bucket (/ m-line 5))
+                 (key (cons m-buf bucket)))
                 (unless (member key seen-keys)
                   (push key seen-keys)
                   (push match all-matches))))
