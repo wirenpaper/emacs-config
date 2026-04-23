@@ -1374,6 +1374,209 @@
                 (message "Teleported to transclusion! Zero splits."))
             (message "Switched buffer, but could not locate #+begin_src.")))))))
 
+(defun my/org-jump-to-beacon-prose ()
+  "Jump directly to the transclusion homing beacon for PROSE.
+   Works for pure prose and file-level nodes."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not in an Org buffer!"))
+  (when (and (fboundp 'org-transclusion-within-transclusion-p)
+             (org-transclusion-within-transclusion-p))
+    (user-error "Already at the highest level (Transclusion)."))
+
+  ;; EXTRACT ALL POSSIBLE IDENTIFIERS (IDs, Names, and Heading Titles)
+  (let* ((block-name (ignore-errors (org-element-property :name (org-element-at-point))))
+         (src-id (or (org-id-get)
+                     (save-excursion 
+                       (ignore-errors (org-back-to-heading t))
+                       (org-id-get))))
+         (heading-title (save-excursion 
+                          (ignore-errors 
+                            (org-back-to-heading t) 
+                            (nth 4 (org-heading-components)))))
+         (current-win (selected-window))
+         (source-buf (current-buffer))
+         (all-matches '())
+         (seen-keys '()))
+
+    ;; ---------------------------------------------------
+    ;; Strategy 1: Hunt for homing beacons (Overlays)
+    ;; ---------------------------------------------------
+    (dolist (buf (buffer-list))
+      (when (and (not (eq buf source-buf))
+                 (with-current-buffer buf (derived-mode-p 'org-mode)))
+        (with-current-buffer buf
+          (dolist (ov (overlays-in (point-min) (point-max)))
+            (when (overlay-get ov 'my-active-link-preview)
+              (let* ((beacon-pos (overlay-start ov))
+                     (beacon-text (buffer-substring-no-properties 
+                                   (overlay-start ov) 
+                                   (overlay-end ov))))
+                
+                ;; Match ANY of the valid prose identifiers
+                (when (or (and src-id (string-match-p (regexp-quote src-id) beacon-text))
+                          (and block-name (string-match-p (regexp-quote block-name) beacon-text))
+                          (and heading-title (string-match-p (regexp-quote heading-title) beacon-text)))
+                  
+                  ;; Deduplicate by EXACT line (Fixes the 5-line bucket bug)
+                  (let* ((m-line (line-number-at-pos beacon-pos))
+                         (key (cons buf m-line)))
+                    (unless (member key seen-keys)
+                      (let ((is-open nil))
+                        (save-excursion
+                          (goto-char beacon-pos)
+                          (let ((limit (min (+ beacon-pos 500) (point-max))))
+                            (while (and (< (point) limit) (not is-open))
+                              (if (and (fboundp 'org-transclusion-within-transclusion-p)
+                                       (org-transclusion-within-transclusion-p))
+                                  (setq is-open t)
+                                (forward-char 1)))))
+                        
+                        (when is-open
+                          (push key seen-keys)
+                          (push (list buf beacon-pos) all-matches))))))))))))
+
+    ;; ---------------------------------------------------
+    ;; Strategy 2: Text Fallback 
+    ;; ---------------------------------------------------
+    (when (null all-matches)
+      (dolist (buf (buffer-list))
+        (when (and (not (eq buf source-buf))
+                   (with-current-buffer buf (derived-mode-p 'org-mode)))
+          (with-current-buffer buf
+            (let ((case-fold-search t) (search-invisible t))
+              
+              ;; Search for any of our identifiers in the buffer text
+              (let ((search-targets (delq nil (list block-name src-id heading-title))))
+                (dolist (target search-targets)
+                  (save-excursion
+                    (goto-char (point-min))
+                    (while (re-search-forward (regexp-quote target) nil t)
+                      (let* ((pos (line-beginning-position))
+                             (m-line (line-number-at-pos pos))
+                             (key (cons buf m-line)))
+                        
+                        ;; Deduplicate exact line so we don't log it twice if heading and ID both match
+                        (unless (member key seen-keys)
+                          (let ((is-open nil))
+                            (save-excursion
+                              (goto-char pos)
+                              (let ((limit (min (+ pos 500) (point-max))))
+                                (while (and (< (point) limit) (not is-open))
+                                  (if (and (fboundp 'org-transclusion-within-transclusion-p)
+                                           (org-transclusion-within-transclusion-p))
+                                      (setq is-open t)
+                                    (forward-char 1)))))
+                            
+                            (when is-open
+                              (push key seen-keys)
+                              (push (list buf pos) all-matches))))))))))))))
+
+    (unless all-matches
+      (user-error "Could not find any ACTIVE prose transclusion clones in open buffers!"))
+
+    (if (= (length all-matches) 1)
+
+        ;; -----------------------------------------------
+        ;; SINGLE MATCH: Teleport directly
+        ;; -----------------------------------------------
+        (let* ((match (car all-matches))
+               (target-buf (car match))
+               (target-pos (cadr match)))
+          (evil-set-jump)
+          (set-window-buffer current-win target-buf)
+          (select-window current-win)
+          (set-buffer target-buf)
+          
+          (goto-char target-pos)
+          (recenter)
+          (message "Teleported directly to single prose transclusion!"))
+
+      ;; -----------------------------------------------
+      ;; MULTIPLE MATCHES: Spawn pristine prose picker
+      ;; -----------------------------------------------
+      (let ((picker-buf (get-buffer-create "*Org Transclusions Prose*")))
+        (with-current-buffer picker-buf
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+
+            (dolist (match all-matches)
+              (let* ((m-buf  (car match))
+                     (m-pos  (cadr match))
+                     (m-file (or (buffer-file-name m-buf) (buffer-name m-buf)))
+                     (m-line (with-current-buffer m-buf
+                               (save-excursion
+                                 (goto-char m-pos)
+                                 (line-number-at-pos))))
+                     (m-text (with-current-buffer m-buf
+                               (save-excursion
+                                 (goto-char m-pos)
+                                 (buffer-substring-no-properties
+                                  (line-beginning-position)
+                                  (line-end-position))))))
+                (insert (propertize m-file 'font-lock-face 'compilation-info)
+                        ":"
+                        (propertize (number-to-string m-line) 'font-lock-face 'compilation-line-number)
+                        ":"
+                        m-text "\n")))
+
+            (special-mode)
+
+            ;; Use isolated prose variables
+            (setq-local my/org-transclusion-prose-jump-matches all-matches)
+            (setq-local my/org-transclusion-prose-jump-source-win current-win)
+
+            ;; Bind local keys to the isolated prose picker
+            (evil-local-set-key 'normal (kbd "RET") 'my/org-transclusion-picker-jump-prose)
+            (evil-local-set-key 'motion (kbd "RET") 'my/org-transclusion-picker-jump-prose)
+            (local-set-key (kbd "RET") 'my/org-transclusion-picker-jump-prose)
+            (local-set-key (kbd "<return>") 'my/org-transclusion-picker-jump-prose)
+
+            (goto-char (point-min))))
+
+        (switch-to-buffer picker-buf)
+        (delete-other-windows)
+        (message "Multiple active prose transclusions found (%d). Press RET to teleport." (length all-matches))))))
+
+
+;; =====================================================================
+;; THE ISOLATED PROSE PICKER JUMP
+;; =====================================================================
+(defun my/org-transclusion-picker-jump-prose ()
+  "Jump to the prose transclusion selected in the *Org Transclusions Prose* picker."
+  (interactive)
+  ;; Reads the isolated prose variables
+  (let* ((matches    (and (boundp 'my/org-transclusion-prose-jump-matches) 
+                          my/org-transclusion-prose-jump-matches))
+         (source-win (and (boundp 'my/org-transclusion-prose-jump-source-win) 
+                          my/org-transclusion-prose-jump-source-win))
+         (line-num   (line-number-at-pos))
+         (match      (nth (1- line-num) matches)))
+    
+    (unless match
+      (user-error "No match on this line!"))
+      
+    (let ((target-buf (car match))
+          (target-pos (cadr match)))
+      (unless (buffer-live-p target-buf)
+        (user-error "Target buffer is no longer live!"))
+        
+      (evil-set-jump)
+      
+      (let ((win (if (window-live-p source-win) source-win (selected-window))))
+        (set-window-buffer win target-buf)
+        (select-window win)
+        (set-buffer target-buf)
+        (goto-char target-pos)
+        
+        ;; Execute the jump immediately. No fallback src-block math needed.
+        (recenter)
+        (delete-other-windows)
+        (message "Teleported directly to prose transclusion!")))))
+
+;; Bind to Evil Ex-command
+(evil-ex-define-cmd "testjmpprose" 'my/org-jump-to-beacon-prose)
+
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
 ;; ==========================================
