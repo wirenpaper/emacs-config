@@ -1078,94 +1078,92 @@
    Maintains exact row/col persistence with absolutely no window splitting.
    If a beacon is secretly active, exclusively uses the smart dispatcher."
   (interactive)
-  (let ((beacon-ov
-         (catch 'found-beacon
-           (dolist (buf (buffer-list))
-             (when (buffer-live-p buf)
-               (with-current-buffer buf
-                 (when (derived-mode-p 'org-mode)
-                   (dolist (ov (overlays-in (point-min) (point-max)))
-                     ;; Specifically check for the beacon state, ignoring K toggles
-                     (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
-                       (throw 'found-beacon ov)))))))
-           nil)))
+  (cond
+   ;; =======================================================
+   ;; CASE 1: In a Tangled File -> Jump up to Org Source
+   ;; (Runs FIRST, so it never gets hijacked by an active beacon elsewhere)
+   ;; =======================================================
+   ((not (derived-mode-p 'org-mode))
+    (let ((current-win (selected-window))
+          (current-col (current-column))
+          (current-line (line-number-at-pos))
+          org-file block-name comment-line)
 
-    (if beacon-ov
-        ;; -> BEACON DETECTED: Exclusively use testjmp, then turn off the beacon
-        (progn
-          (message "Homing beacon active! Routing to dispatcher...")
-          (my/org-jump-to-beacon)
-          
-          ;; Switch it off securely
-          (when (overlay-buffer beacon-ov)
-            (with-current-buffer (overlay-buffer beacon-ov)
-              (let ((inhibit-read-only t))
-                (save-excursion
-                  (goto-char (overlay-start beacon-ov))
-                  (end-of-line)
-                  (forward-char 1)
-                  (ignore-errors
-                    (when (and (fboundp 'org-transclusion-within-transclusion-p)
-                               (org-transclusion-within-transclusion-p))
-                      (org-transclusion-remove)))
-                  (let ((was-modified (buffer-modified-p)))
+      (save-excursion
+        (if (re-search-backward "\\[\\[file:\\(.*?\\)::\\(.*?\\)\\]\\[" nil t)
+            (setq org-file (match-string 1)
+                  block-name (match-string 2)
+                  comment-line (line-number-at-pos))
+          (user-error "Could not find Org breadcrumb link above cursor!")))
+
+      (let* ((line-offset (- current-line comment-line))
+             (org-file-path (expand-file-name org-file (file-name-directory (buffer-file-name)))))
+
+        (unless (file-exists-p org-file-path)
+          (user-error "Org file '%s' does not exist." org-file-path))
+
+        (evil-set-jump)
+        (let ((buf (find-file-noselect org-file-path)))
+          (set-window-buffer current-win buf)
+          (select-window current-win)
+          (set-buffer buf)
+
+          (goto-char (point-min))
+          (let ((case-fold-search t))
+            (if (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
+                (progn
+                  (beginning-of-line)
+                  (forward-line (1+ line-offset))
+                  (move-to-column current-col)
+                  (recenter)
+                  (message "Teleported up to Org Source! Zero splits."))
+              (message "Could not find block '%s' in %s" block-name org-file)))))))
+
+   ;; =======================================================
+   ;; CASE 2: In Org Source -> Beacon Check OR Transclusion Clone(s)
+   ;; =======================================================
+   ((derived-mode-p 'org-mode)
+    (when (and (fboundp 'org-transclusion-within-transclusion-p)
+               (org-transclusion-within-transclusion-p))
+      (user-error "Already at the highest level (Transclusion). Use 'g m' to go down."))
+
+    ;; ONLY scan for beacons if we are actually in an Org file
+    (let ((beacon-ov
+           (catch 'found-beacon
+             (dolist (buf (buffer-list))
+               (when (buffer-live-p buf)
+                 (with-current-buffer buf
+                   (when (derived-mode-p 'org-mode)
+                     (dolist (ov (overlays-in (point-min) (point-max)))
+                       (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
+                         (throw 'found-beacon ov)))))))
+             nil)))
+
+      (if beacon-ov
+          ;; -> BEACON DETECTED: Exclusively use testjmp, then turn off the beacon
+          (progn
+            (message "Homing beacon active! Routing to dispatcher...")
+            (my/org-jump-to-beacon)
+            
+            ;; Switch it off securely
+            (when (overlay-buffer beacon-ov)
+              (with-current-buffer (overlay-buffer beacon-ov)
+                (let ((inhibit-read-only t))
+                  (save-excursion
+                    (goto-char (overlay-start beacon-ov))
+                    (end-of-line)
+                    (forward-char 1)
                     (ignore-errors
-                      (delete-region (1- (line-beginning-position)) (line-end-position)))
-                    (set-buffer-modified-p was-modified))))
-              (delete-overlay beacon-ov))))
+                      (when (and (fboundp 'org-transclusion-within-transclusion-p)
+                                 (org-transclusion-within-transclusion-p))
+                        (org-transclusion-remove)))
+                    (let ((was-modified (buffer-modified-p)))
+                      (ignore-errors
+                        (delete-region (1- (line-beginning-position)) (line-end-position)))
+                      (set-buffer-modified-p was-modified))))
+                (delete-overlay beacon-ov))))
 
-      ;; -> NORMAL BEHAVIOR: Execute your exact original cond block
-      (cond
-       ;; =======================================================
-       ;; CASE 1: In a Tangled File -> Jump up to Org Source
-       ;; =======================================================
-       ((not (derived-mode-p 'org-mode))
-        (let ((current-win (selected-window))
-              (current-col (current-column))
-              (current-line (line-number-at-pos))
-              org-file block-name comment-line)
-
-          (save-excursion
-            (if (re-search-backward "\\[\\[file:\\(.*?\\)::\\(.*?\\)\\]\\[" nil t)
-                (setq org-file (match-string 1)
-                      block-name (match-string 2)
-                      comment-line (line-number-at-pos))
-              (user-error "Could not find Org breadcrumb link above cursor!")))
-
-          (let* ((line-offset (- current-line comment-line))
-                 (org-file-path (expand-file-name org-file (file-name-directory (buffer-file-name)))))
-
-            (unless (file-exists-p org-file-path)
-              (user-error "Org file '%s' does not exist." org-file-path))
-
-            (evil-set-jump)
-            (let ((buf (find-file-noselect org-file-path)))
-              (set-window-buffer current-win buf)
-              (select-window current-win)
-              (set-buffer buf)
-
-              (goto-char (point-min))
-              (let ((case-fold-search t))
-                (if (re-search-forward (format "^[ \t]*#\\+name:[ \t]*%s" (regexp-quote block-name)) nil t)
-                    (progn
-                      (beginning-of-line)
-                      (forward-line (1+ line-offset))
-                      (move-to-column current-col)
-                      (recenter)
-                      (message "Teleported up to Org Source! Zero splits."))
-                  (message "Could not find block '%s' in %s" block-name org-file)))))))
-
-       ;; =======================================================
-       ;; CASE 2: In Org Source -> Jump up to Transclusion Clone(s)
-       ;; =======================================================
-       ((derived-mode-p 'org-mode)
-        (when (and (fboundp 'org-transclusion-within-transclusion-p)
-                   (org-transclusion-within-transclusion-p))
-          (user-error "Already at the highest level (Transclusion). Use 'g m' to go down."))
-
-        ;; -------------------------------------------------------
-        ;; THE NEW BRANCH: Source Block vs Prose Dispatch
-        ;; -------------------------------------------------------
+        ;; -> NORMAL BEHAVIOR: Execute your exact original math
         (if (not (org-in-src-block-p))
             
             ;; -> PROSE DETECTED: Hand over to Smart Dispatcher
