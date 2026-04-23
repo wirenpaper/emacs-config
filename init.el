@@ -496,6 +496,113 @@
 (add-hook 'before-save-hook #'my/org-transclusion-cleanup-ephemera)
 (add-hook 'kill-buffer-hook #'my/org-transclusion-cleanup-ephemera)
 
+(defun my/org-toggle-beacon ()
+  "Turn the link into a homing beacon. 
+   Secretly opens the transclusion to allow
+   math jumps, but completely hides it visually, 
+   using a high-priority mask to nuke the
+   vertical transclusion line."
+  (interactive)
+  (let* ((context (org-element-context))
+         (type (car context)))
+         
+    (if (eq type 'link)
+        (let* ((beg (org-element-property :begin context))
+               (end (org-element-property :end context))
+               (tracker-ov nil))
+               
+          (dolist (ov (overlays-at beg))
+            (when (overlay-get ov 'my-active-link-preview)
+              (setq tracker-ov ov)))
+              
+          (if tracker-ov
+              ;; ==========================================
+              ;; TURN OFF: Remove transclusion and beacon
+              ;; ==========================================
+              (progn
+                (save-excursion
+                  (goto-char beg)
+                  (end-of-line)
+                  (forward-char 1)
+                  (when (org-transclusion-within-transclusion-p)
+                    (org-transclusion-remove))
+                  (let ((was-modified (buffer-modified-p)))
+                    (delete-region (1- (line-beginning-position)) (line-end-position))
+                    (set-buffer-modified-p was-modified)))
+                (delete-overlay tracker-ov)
+                (message "Beacon deactivated."))
+                
+            ;; ==========================================
+            ;; TURN ON: Create beacon, transclude, hide all
+            ;; ==========================================
+            (let ((link-str (buffer-substring-no-properties beg end)))
+              (let ((ov (make-overlay beg end)))
+                (overlay-put ov 'face '(:foreground "red" :weight bold))
+                (overlay-put ov 'my-active-link-preview t)
+                (overlay-put ov 'my-preview-state 'beacon-hidden)
+                (setq tracker-ov ov))
+                
+              (save-excursion
+                (end-of-line)
+                (let ((insert-pos (point))
+                      (was-modified (buffer-modified-p)))
+                  
+                  (insert "\n#+transclude: " link-str)
+                  (put-text-property insert-pos (point) 'my-inline-preview t)
+                  
+                  (goto-char (1+ insert-pos))
+                  (condition-case err
+                      (progn
+                        (org-transclusion-add)
+                        
+                        (save-excursion
+                          ;; 1. NUKE THE NEWLINE'S VERTICAL LINE
+                          ;; We cover the \n character. It stays visible, but we strip its ability
+                          ;; to project the vertical transclusion border.
+                          (let ((nl-ov (make-overlay insert-pos (1+ insert-pos))))
+                            (overlay-put nl-ov 'priority 100)
+                            (overlay-put nl-ov 'line-prefix "")
+                            (overlay-put nl-ov 'wrap-prefix "")
+                            (overlay-put nl-ov 'evaporate t))
+                          
+                          ;; 2. HIDE THE REST OF THE TRANSCLUSION
+                          (goto-char (1+ insert-pos))
+                          (let ((hide-start (1+ insert-pos))) 
+                            (forward-line 1)
+                            (while (and (not (eobp))
+                                        (save-excursion 
+                                          (beginning-of-line)
+                                          (org-transclusion-within-transclusion-p)))
+                              (forward-line 1))
+                            
+                            (let ((hide-ov (make-overlay hide-start (point))))
+                              (overlay-put hide-ov 'invisible t)
+                              (overlay-put hide-ov 'priority 100)
+                              ;; Also strip prefixes here just in case Emacs tries to draw them on the collapsed text
+                              (overlay-put hide-ov 'line-prefix "")
+                              (overlay-put hide-ov 'wrap-prefix "")
+                              (overlay-put hide-ov 'evaporate t)
+                              
+                              ;; Remove underlying properties from any other overlays
+                              (dolist (o (overlays-in hide-start (point)))
+                                (unless (eq o hide-ov)
+                                  (overlay-put o 'line-prefix nil)
+                                  (overlay-put o 'wrap-prefix nil)
+                                  (overlay-put o 'before-string nil)
+                                  (overlay-put o 'display nil))))))
+                              
+                        (message "Beacon deployed! (Transclusion secretly active)"))
+                    (error
+                     (delete-region insert-pos (line-end-position))
+                     (delete-overlay tracker-ov)
+                     (message "Could not deploy beacon: %s" (error-message-string err))))
+                     
+                  (set-buffer-modified-p was-modified))))))
+      (user-error "Not on an Org link!"))))
+
+;; Bind to Evil Ex-command
+(evil-ex-define-cmd "beacon" 'my/org-toggle-beacon)
+
 (defun my/org-transclusion-toggle ()
   "Smart K toggle. 
    Code blocks: [1] Open -> [2] Hide Wrappers -> [3] Close
