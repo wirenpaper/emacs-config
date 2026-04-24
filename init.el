@@ -1012,11 +1012,22 @@
           (cond
            ;; EXACTLY on an ID link -> Deploy Beacon + Jump!
            ((and (eq type 'link) (string= (org-element-property :type context) "id"))
-            (let ((id (org-element-property :path context)))
+            (let ((id (org-element-property :path context))
+                  (beacon-active nil))
               (evil-set-jump)
-              (my/org-toggle-beacon)
+              
+              ;; ---> BEACON CHECK LOGIC <---
+              ;; Scan overlays at current cursor to see if beacon is already active
+              (dolist (ov (overlays-at (point)))
+                (when (eq (overlay-get ov 'my-preview-state) 'beacon-hidden)
+                  (setq beacon-active t)))
+              
+              ;; Only toggle if the beacon is NOT active
+              (unless beacon-active
+                (my/org-toggle-beacon))
+              
               (org-id-goto id)
-              (message "Beacon deployed! Opened source: %s" id)))
+              (message "Beacon active! Opened source: %s" id)))
               
            ;; On a `#+transclude:` line -> Just Jump!
            ((save-excursion
