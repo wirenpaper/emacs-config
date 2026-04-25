@@ -422,6 +422,50 @@
     (make-directory org-roam-directory))
   (org-roam-db-autosync-mode)
 
+;; =====================================================================
+;; THE SMART DISPATCHERS (Nuclear Override for g d, g r, and K)
+;; =====================================================================
+
+(defun my/smart-gd ()
+  "Traffic cop for `g d'.
+If in Org-mode: Drill down into transclusion/source. 
+If in Code: Tell LSP to jump to the function definition."
+  (interactive)
+  (if (derived-mode-p 'org-mode)
+      (call-interactively 'my/org-transclusion-open-source-at-point)
+    (call-interactively 'xref-find-definitions)))
+
+(defun my/smart-gr ()
+  "Traffic cop for `g r'.
+If in Org-mode: Find Org-Roam backlinks. 
+If in Code: Tell LSP to find where this function is used."
+  (interactive)
+  (if (derived-mode-p 'org-mode)
+      (call-interactively 'my/org-transclusion-backlinks)
+    (call-interactively 'xref-find-references)))
+
+(defun my/smart-K ()
+  "Traffic cop for `K'.
+If in Org-mode: Toggle the transclusion / stealth beacon.
+If in Code: Pull up LSP ElDoc (hover documentation)."
+  (interactive)
+  (if (derived-mode-p 'org-mode)
+      (call-interactively 'my/org-transclusion-toggle)
+    ;; FIX: Pop open the dedicated documentation window
+    (call-interactively 'eldoc-doc-buffer)))
+
+;; Forcefully rip out any old bindings and hard-wire the Traffic Cops
+;; directly into Evil's core nervous system.
+(with-eval-after-load 'evil
+  (define-key evil-normal-state-map (kbd "g d") 'my/smart-gd)
+  (define-key evil-normal-state-map (kbd "g r") 'my/smart-gr)
+  (define-key evil-normal-state-map (kbd "K")   'my/smart-K)
+  
+  (define-key evil-motion-state-map (kbd "g d") 'my/smart-gd)
+  (define-key evil-motion-state-map (kbd "g r") 'my/smart-gr)
+  (define-key evil-motion-state-map (kbd "K")   'my/smart-K))
+
+
   ;; Custom function to delete the current roam file
   (defun my/org-roam-delete-current-node ()
     "Deletes the current org-roam file and kills its buffer."
@@ -468,10 +512,10 @@
     (kbd "<leader> n a") 'org-transclusion-add
     (kbd "<leader> n m") 'org-transclusion-make-from-link
     (kbd "<leader> n r") 'org-transclusion-remove
-    (kbd "g d") 'my/org-transclusion-open-source-at-point
-    (kbd "g r") 'my/org-transclusion-backlinks
+    ;;(kbd "g d") 'my/org-transclusion-open-source-at-point
+    ;;(kbd "g r") 'my/org-transclusion-backlinks
     (kbd "g s") 'my/org-toggle-link-under-cursor    ;; <-- NEW PROPER BINDING
-    (kbd "K") 'my/org-transclusion-toggle
+    ;;(kbd "K") 'my/org-transclusion-toggle
     (kbd "g y") #'my/org-store-link-smart   ; 'y' for Yank link
     (kbd "g p") #'my/org-insert-link-clean))
 
@@ -2576,9 +2620,9 @@ Displays the calculated breadcrumb path in the echo area."
       (kbd "<leader> c r") 'eglot-rename
       (kbd "<leader> c a") 'eglot-code-actions
       (kbd "<leader> c f") 'eglot-format-buffer
-      (kbd "g d") 'xref-find-definitions
-      (kbd "g D") 'xref-find-references
-      (kbd "K") 'eldoc)))
+      ;;(kbd "g d") 'xref-find-definitions
+      (kbd "g D") 'xref-find-references)))
+      ;;(kbd "K") 'eldoc)))
 
 ;; ==========================================
 ;; C/C++ Indentation & Formatting (Linux Style)
