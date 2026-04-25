@@ -451,8 +451,10 @@ If in Code: Pull up LSP ElDoc (hover documentation)."
   (interactive)
   (if (derived-mode-p 'org-mode)
       (call-interactively 'my/org-transclusion-toggle)
-    ;; FIX: Pop open the dedicated documentation window
-    (call-interactively 'eldoc-doc-buffer)))
+    ;; 1. Force Emacs to ask the LSP for documentation IMMEDIATELY
+    (eldoc)
+    ;; 2. Open the dedicated window to display it
+    (eldoc-doc-buffer)))
 
 ;; Forcefully rip out any old bindings and hard-wire the Traffic Cops
 ;; directly into Evil's core nervous system.
@@ -2587,12 +2589,7 @@ Displays the calculated breadcrumb path in the echo area."
 ;; 2. Setup Eglot (The built-in LSP client)
 (use-package eglot
   :ensure nil
-  :hook
-  ((c-mode . eglot-ensure)
-   (c++-mode . eglot-ensure)
-   (python-mode . eglot-ensure) ;; <-- ADDED: Start LSP automatically for Python
-   ;; FIX: Prevent Eldoc from stacking hover documentation with function signatures
-   (eglot-managed-mode . (lambda () (setq-local eldoc-documentation-strategy #'eldoc-documentation-default))))
+  :hook ((c-mode c++-mode python-mode) . eglot-ensure)
   :custom
   ;; Ignore BOTH auto-formatting on type and inlay hints
   (eglot-ignored-server-capabilities '(:documentOnTypeFormattingProvider :inlayHintProvider))
@@ -2620,9 +2617,7 @@ Displays the calculated breadcrumb path in the echo area."
       (kbd "<leader> c r") 'eglot-rename
       (kbd "<leader> c a") 'eglot-code-actions
       (kbd "<leader> c f") 'eglot-format-buffer
-      ;;(kbd "g d") 'xref-find-definitions
       (kbd "g D") 'xref-find-references)))
-      ;;(kbd "K") 'eldoc)))
 
 ;; ==========================================
 ;; C/C++ Indentation & Formatting (Linux Style)
