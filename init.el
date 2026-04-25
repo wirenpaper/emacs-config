@@ -444,17 +444,58 @@ If in Code: Tell LSP to find where this function is used."
       (call-interactively 'my/org-transclusion-backlinks)
     (call-interactively 'xref-find-references)))
 
+;; Silence the byte-compiler warning for the internal ElDoc function
+;;(declare-function eldoc--doc-buffer "eldoc")
+
+;; =====================================================================
+;; NUCLEAR ELDOC HIJACK (Guaranteed No-Split Window Replacement)
+;; =====================================================================
+
+;; 1. Force ElDoc to ALWAYS use the buffer. (By default, if the doc is 
+;;    short, it just flashes at the bottom. This forces it to a window).
+(setq eldoc-display-functions '(eldoc-display-in-buffer))
+
+;; 2. THE NUCLEAR BOMB: Tell the Emacs Window Manager that whenever 
+;;    the *eldoc* buffer appears, it MUST replace the current window.
+(add-to-list 'display-buffer-alist
+             '("^\\*eldoc\\*"
+               (display-buffer-same-window)))
+
+;; 3. The newly stripped-down, bulletproof Smart K
 (defun my/smart-K ()
   "Traffic cop for `K'.
-If in Org-mode: Toggle the transclusion / stealth beacon.
-If in Code: Pull up LSP ElDoc (hover documentation)."
+If in Org-mode: Toggle transclusion.
+If in Code: Force ElDoc to fetch and hijack the window seamlessly."
   (interactive)
   (if (derived-mode-p 'org-mode)
       (call-interactively 'my/org-transclusion-toggle)
-    ;; 1. Force Emacs to ask the LSP for documentation IMMEDIATELY
-    (eldoc)
-    ;; 2. Open the dedicated window to display it
-    (eldoc-doc-buffer)))
+
+    ;; 1. Drop a breadcrumb for Evil so C-o works perfectly
+    (when (fboundp 'evil-set-jump)
+      (evil-set-jump))
+
+    ;; 2. Nuke old documentation to prevent flashing stale data
+    (when (get-buffer "*eldoc*")
+      (with-current-buffer "*eldoc*"
+        (let ((inhibit-read-only t))
+          (erase-buffer))))
+
+    ;; 3. Ask Eglot to fetch data asynchronously. 
+    ;;    Because of the global window rule we set above, Emacs will 
+    ;;    natively hijack your screen the instant the text arrives.
+    (eldoc)))
+
+;; 4. Ensure 'q' flawlessly puts your C++ code back on the screen
+(add-hook 'eldoc-mode-hook
+          (lambda ()
+            (local-set-key (kbd "q") 
+                           (lambda ()
+                             (interactive)
+                             ;; Swap the eldoc buffer back to your C++ code
+                             (quit-window)
+                             ;; Guarantee your cursor is exactly where it started
+                             (when (fboundp 'evil-jump-backward)
+                               (evil-jump-backward 1))))))
 
 ;; Forcefully rip out any old bindings and hard-wire the Traffic Cops
 ;; directly into Evil's core nervous system.
