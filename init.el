@@ -603,6 +603,31 @@
 ;; Bind to Evil Ex-command
 (evil-ex-define-cmd "beacon" 'my/org-toggle-beacon)
 
+(defun my/org-jump-to-src-block ()
+  "Jump to the start of the code in the next source block.
+If already inside the code body of a block, do nothing."
+  (interactive)
+  ;; Only execute if we are actually in an Org file
+  (when (derived-mode-p 'org-mode)
+    ;; `org-in-src-block-p` with a `t` argument checks if we are STRICTLY inside
+    ;; the code body. If we are on the #+begin_src line, it returns nil.
+    (unless (org-in-src-block-p t)
+      (let* ((case-fold-search t) ; Make regex case-insensitive for #+BEGIN_SRC
+             ;; Search forward, but start from the beginning of the current line
+             ;; so we catch the block if the cursor is currently on #+begin_src
+             (match-pos (save-excursion
+                          (beginning-of-line)
+                          (re-search-forward "^[ \t]*#\\+begin_src" nil t))))
+        (when match-pos
+          (goto-char match-pos)
+          (forward-line 1)      ; Move down one line into the actual code
+          (back-to-indentation) ; Move to the start of the text (skipping spaces)
+          (message "Jumped to source block!"))))))
+
+;; Define the custom Evil Ex command `:jmp`
+(with-eval-after-load 'evil
+  (evil-ex-define-cmd "jmp" #'my/org-jump-to-src-block))
+
 (defun my/org-transclusion-toggle ()
   "Smart K toggle. 
    Code blocks: [1] Open   -> [2] Hide Wrappers -> [3] Close
@@ -767,10 +792,13 @@
             (message "Beacon deactivated (Toggled via K)."))))))
 
      ;; =======================================================
-     ;; CASE 4: Fallback
+     ;; CASE 4: Fallback -> Jump to Source Block
      ;; =======================================================
      (t
-      (message "Not on a transclude line, link, or inside one!")))))
+      ;; Triggers when not on a transclude line, link, or inside a transclusion.
+      ;; Relies on my/org-jump-to-src-block's internal logic to abort safely 
+      ;; if already in a block or if no block exists.
+      (my/org-jump-to-src-block)))))
 
 (setq org-edit-src-content-indentation 0)
 (setq org-src-preserve-indentation t)
@@ -1856,31 +1884,6 @@
         (recenter)
         (delete-other-windows)
         (message "Teleported directly to prose transclusion!")))))
-
-(defun my/org-jump-to-src-block ()
-  "Jump to the start of the code in the next source block.
-If already inside the code body of a block, do nothing."
-  (interactive)
-  ;; Only execute if we are actually in an Org file
-  (when (derived-mode-p 'org-mode)
-    ;; `org-in-src-block-p` with a `t` argument checks if we are STRICTLY inside
-    ;; the code body. If we are on the #+begin_src line, it returns nil.
-    (unless (org-in-src-block-p t)
-      (let* ((case-fold-search t) ; Make regex case-insensitive for #+BEGIN_SRC
-             ;; Search forward, but start from the beginning of the current line
-             ;; so we catch the block if the cursor is currently on #+begin_src
-             (match-pos (save-excursion
-                          (beginning-of-line)
-                          (re-search-forward "^[ \t]*#\\+begin_src" nil t))))
-        (when match-pos
-          (goto-char match-pos)
-          (forward-line 1)      ; Move down one line into the actual code
-          (back-to-indentation) ; Move to the start of the text (skipping spaces)
-          (message "Jumped to source block!"))))))
-
-;; Define the custom Evil Ex command `:jmp`
-(with-eval-after-load 'evil
-  (evil-ex-define-cmd "jmp" #'my/org-jump-to-src-block))
 
 ;; ==========================================
 ;; FULLSCREEN TAKEOVER JUMP LOGIC
