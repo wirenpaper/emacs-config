@@ -624,10 +624,6 @@ If already inside the code body of a block, do nothing."
           (back-to-indentation) ; Move to the start of the text (skipping spaces)
           (message "Jumped to source block!"))))))
 
-;; Define the custom Evil Ex command `:jmp`
-(with-eval-after-load 'evil
-  (evil-ex-define-cmd "jmp" #'my/org-jump-to-src-block))
-
 (defun my/org-transclusion-toggle ()
   "Smart K toggle. 
    Code blocks: [1] Open   -> [2] Hide Wrappers -> [3] Close
