@@ -444,17 +444,58 @@ If in Code: Tell LSP to find where this function is used."
       (call-interactively 'my/org-transclusion-backlinks)
     (call-interactively 'xref-find-references)))
 
+;; Silence the byte-compiler warning for the internal ElDoc function
+;;(declare-function eldoc--doc-buffer "eldoc")
+
+;; =====================================================================
+;; NUCLEAR ELDOC HIJACK (Guaranteed No-Split Window Replacement)
+;; =====================================================================
+
+;; 1. Force ElDoc to ALWAYS use the buffer. (By default, if the doc is 
+;;    short, it just flashes at the bottom. This forces it to a window).
+(setq eldoc-display-functions '(eldoc-display-in-buffer))
+
+;; 2. THE NUCLEAR BOMB: Tell the Emacs Window Manager that whenever 
+;;    the *eldoc* buffer appears, it MUST replace the current window.
+(add-to-list 'display-buffer-alist
+             '("^\\*eldoc\\*"
+               (display-buffer-same-window)))
+
+;; 3. The newly stripped-down, bulletproof Smart K
 (defun my/smart-K ()
   "Traffic cop for `K'.
-If in Org-mode: Toggle the transclusion / stealth beacon.
-If in Code: Pull up LSP ElDoc (hover documentation)."
+If in Org-mode: Toggle transclusion.
+If in Code: Force ElDoc to fetch and hijack the window seamlessly."
   (interactive)
   (if (derived-mode-p 'org-mode)
       (call-interactively 'my/org-transclusion-toggle)
-    ;; 1. Force Emacs to ask the LSP for documentation IMMEDIATELY
-    (eldoc)
-    ;; 2. Open the dedicated window to display it
-    (eldoc-doc-buffer)))
+
+    ;; 1. Drop a breadcrumb for Evil so C-o works perfectly
+    (when (fboundp 'evil-set-jump)
+      (evil-set-jump))
+
+    ;; 2. Nuke old documentation to prevent flashing stale data
+    (when (get-buffer "*eldoc*")
+      (with-current-buffer "*eldoc*"
+        (let ((inhibit-read-only t))
+          (erase-buffer))))
+
+    ;; 3. Ask Eglot to fetch data asynchronously. 
+    ;;    Because of the global window rule we set above, Emacs will 
+    ;;    natively hijack your screen the instant the text arrives.
+    (eldoc)))
+
+;; 4. Ensure 'q' flawlessly puts your C++ code back on the screen
+(add-hook 'eldoc-mode-hook
+          (lambda ()
+            (local-set-key (kbd "q") 
+                           (lambda ()
+                             (interactive)
+                             ;; Swap the eldoc buffer back to your C++ code
+                             (quit-window)
+                             ;; Guarantee your cursor is exactly where it started
+                             (when (fboundp 'evil-jump-backward)
+                               (evil-jump-backward 1))))))
 
 ;; Forcefully rip out any old bindings and hard-wire the Traffic Cops
 ;; directly into Evil's core nervous system.
@@ -3076,3 +3117,97 @@ Displays the calculated breadcrumb path in the echo area."
   :ensure t
   :config
   (xclip-mode 1))
+
+
+;; =========================================
+;; Global Dape Settings (Language Agnostic)
+;; =========================================
+
+(use-package dape
+  :ensure t
+  :hook
+  (kill-emacs . dape-breakpoint-save)
+  (after-init . dape-breakpoint-load)
+  (dape-quit-hook . dape-kill-buffers)
+
+  :config
+  (dape-breakpoint-global-mode)
+  (setq dape-buffer-window-arrangement 'right)
+
+  (setq dape-info-buffer-window-groups
+        '((dape-info-scope-mode dape-info-watch-mode)
+          (dape-info-stack-mode dape-info-modules-mode dape-info-sources-mode)
+          (dape-info-breakpoints-mode dape-info-threads-mode))))
+
+;; Auto-close compilation window on success
+(add-hook 'compilation-finish-functions
+          (lambda (buf str)
+            (when (string-match "finished" str)
+              (let ((win (get-buffer-window buf)))
+                (when win
+                  (delete-window win))))))
+
+;; =========================================
+;; Dape Global Debug Keybindings
+;; =========================================
+
+(with-eval-after-load 'evil
+  (with-eval-after-load 'dape
+    (evil-define-key 'normal 'global
+      (kbd "SPC d b") 'dape-breakpoint-toggle
+      (kbd "SPC d D") 'dape-breakpoint-remove-all
+      
+      ;; 🚨 Mapped to our new "dispatcher" function at the bottom
+      (kbd "SPC d d") 'my-dape-start-dispatch  
+      
+      (kbd "SPC d q") 'dape-quit
+      (kbd "SPC d c") 'dape-continue
+      (kbd "SPC d n") 'dape-next
+      (kbd "SPC d i") 'dape-step-in
+      (kbd "SPC d o") 'dape-step-out
+      (kbd "SPC d r") 'dape-restart)))
+
+;; =========================================
+;; Dape Language-Specific Debug Configurations
+;; =========================================
+
+(defun my-dape-start-dispatch ()
+  "Silently start the debugger based on the current language."
+  (interactive)
+  (cond
+
+   ;; -----------------------------------------
+   ;; C / C++ (Xmake + GDB)
+   ;; -----------------------------------------
+   ((memq major-mode '(c-mode c-ts-mode c++-mode c++-ts-mode))
+    (let* ((cwd (dape-cwd))
+           (build-path (expand-file-name "build/linux/x86_64/debug/my_modules_app" cwd))
+           (bin-path   (expand-file-name "bin/my_modules_app" cwd))
+           (target     (if (file-exists-p bin-path) bin-path build-path)))
+      
+      ;; Safety Check
+      (unless (file-exists-p target)
+        (error "🚨 FATAL DAPE ERROR: The binary DOES NOT EXIST at: %s" target))
+      
+      ;; Execute Dape
+      (dape (list 'command "gdb"
+                  'command-args '("--interpreter=dap")
+                  :request "launch"
+                  :cwd cwd
+                  :args []
+                  :program target
+                  'compile "xmake f -m debug && xmake"))))
+
+   ;; -----------------------------------------
+   ;; FUTURE LANGUAGE GOES HERE (Example: Python)
+   ;; -----------------------------------------
+   ;; ((memq major-mode '(python-mode python-ts-mode))
+   ;;  (dape (list 'command "debugpy"
+   ;;              :request "launch"
+   ;;              :program (buffer-file-name))))
+
+   ;; -----------------------------------------
+   ;; Fallback: If language isn't defined above, ask normally
+   ;; -----------------------------------------
+   (t
+    (call-interactively 'dape))))
