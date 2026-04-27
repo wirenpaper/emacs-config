@@ -3157,9 +3157,8 @@ Displays the calculated breadcrumb path in the echo area."
       (kbd "SPC d b") 'dape-breakpoint-toggle
       (kbd "SPC d D") 'dape-breakpoint-remove-all
       
-      ;; 🚨 Mapped to our new "dispatcher" function at the bottom
       (kbd "SPC d d") 'my-dape-start-dispatch  
-      
+      (kbd "SPC d e") 'dape-evaluate-expression 
       (kbd "SPC d q") 'dape-quit
       (kbd "SPC d c") 'dape-continue
       (kbd "SPC d n") 'dape-next
