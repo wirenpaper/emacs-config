@@ -3157,22 +3157,39 @@ Displays the calculated breadcrumb path in the echo area."
   "Switch to the Dape REPL where you can type \"p diag\"."
   (interactive)
   (save-window-excursion (dape-repl))
-  (switch-to-buffer "*dape-repl*"))
+  (pop-to-buffer-same-window "*dape-repl*"))
 
 (defun my-dape-open-stack ()
   "Switch to ONLY the Stack Trace window."
   (interactive)
-  ;; Muzzle Dape: build the buffers in the background, but undo the window splits instantly
   (save-window-excursion (dape-info)) 
-  (switch-to-buffer "*dape-info Stack*"))
+  (pop-to-buffer-same-window "*dape-info Stack*"))
 
 (defun my-dape-open-locals ()
   "Switch to ONLY the Locals window to inspect variables."
   (interactive)
   (save-window-excursion (dape-info))
   (if (get-buffer "*dape-info Locals*")
-      (switch-to-buffer "*dape-info Locals*")
-    (switch-to-buffer "*dape-info Scope*")))
+      (pop-to-buffer-same-window "*dape-info Locals*")
+    (pop-to-buffer-same-window "*dape-info Scope*")))
+
+(defun my-dape-open-breakpoints ()
+  "Switch to ONLY the Breakpoints window."
+  (interactive)
+  (save-window-excursion (dape-info))
+  (pop-to-buffer-same-window "*dape-info Breakpoints*"))
+
+(defun my-dape-open-threads ()
+  "Switch to ONLY the Threads window."
+  (interactive)
+  (save-window-excursion (dape-info))
+  (pop-to-buffer-same-window "*dape-info Threads*"))
+
+(defun my-dape-open-watch ()
+  "Switch to ONLY the Watch window."
+  (interactive)
+  (save-window-excursion (dape-info))
+  (pop-to-buffer-same-window "*dape-info Watch*"))
 
 ;; =========================================
 ;; Dape Global Debug Keybindings
@@ -3194,9 +3211,12 @@ Displays the calculated breadcrumb path in the echo area."
       (kbd "SPC d d") 'my-dape-start-dispatch  
       
       ;; 🚨 MODAL POPUPS 🚨
-      (kbd "SPC d e") 'my-dape-open-repl     
-      (kbd "SPC d s") 'my-dape-open-stack    
-      (kbd "SPC d l") 'my-dape-open-locals   
+      (kbd "SPC d e") 'my-dape-open-repl       ;; Evaluate / REPL
+      (kbd "SPC d s") 'my-dape-open-stack      ;; Stack trace
+      (kbd "SPC d l") 'my-dape-open-locals     ;; Local variables
+      (kbd "SPC d B") 'my-dape-open-breakpoints;; Manage breakpoints
+      (kbd "SPC d t") 'my-dape-open-threads    ;; Threads
+      (kbd "SPC d w") 'my-dape-open-watch      ;; Watch expressions
       
       (kbd "SPC d q") 'dape-quit
       (kbd "SPC d c") 'dape-continue
