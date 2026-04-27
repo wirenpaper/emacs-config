@@ -3132,12 +3132,14 @@ Displays the calculated breadcrumb path in the echo area."
 
   :config
   (dape-breakpoint-global-mode)
-  (setq dape-buffer-window-arrangement 'right)
-
-  (setq dape-info-buffer-window-groups
-        '((dape-info-scope-mode dape-info-watch-mode)
-          (dape-info-stack-mode dape-info-modules-mode dape-info-sources-mode)
-          (dape-info-breakpoints-mode dape-info-threads-mode))))
+  
+  ;; 1. Stop Dape from automatically arranging a giant layout
+  (setq dape-buffer-window-arrangement nil)
+  
+  ;; 2. Stop Dape from automatically popping open windows when debugging starts
+  ;; (Updated for Dape >= 0.13.0)
+  (remove-hook 'dape-start-hook 'dape-info)
+  (remove-hook 'dape-start-hook 'dape-repl))
 
 ;; Auto-close compilation window on success
 (add-hook 'compilation-finish-functions
@@ -3148,17 +3150,54 @@ Displays the calculated breadcrumb path in the echo area."
                   (delete-window win))))))
 
 ;; =========================================
+;; Dape Modal Popup Helpers
+;; =========================================
+
+(defun my-dape-open-repl ()
+  "Switch to the Dape REPL where you can type \"p diag\"."
+  (interactive)
+  (save-window-excursion (dape-repl))
+  (switch-to-buffer "*dape-repl*"))
+
+(defun my-dape-open-stack ()
+  "Switch to ONLY the Stack Trace window."
+  (interactive)
+  ;; Muzzle Dape: build the buffers in the background, but undo the window splits instantly
+  (save-window-excursion (dape-info)) 
+  (switch-to-buffer "*dape-info Stack*"))
+
+(defun my-dape-open-locals ()
+  "Switch to ONLY the Locals window to inspect variables."
+  (interactive)
+  (save-window-excursion (dape-info))
+  (if (get-buffer "*dape-info Locals*")
+      (switch-to-buffer "*dape-info Locals*")
+    (switch-to-buffer "*dape-info Scope*")))
+
+;; =========================================
 ;; Dape Global Debug Keybindings
 ;; =========================================
 
 (with-eval-after-load 'evil
   (with-eval-after-load 'dape
+    
+    ;; Make 'q' instantly close the REPL window when in Evil Normal mode
+    (evil-define-key 'normal dape-repl-mode-map (kbd "q") 'quit-window)
+    
+    ;; Note: 'q' already works out-of-the-box for Stack and Locals windows 
+    ;; because Emacs automatically makes info buffers read-only.
+
     (evil-define-key 'normal 'global
       (kbd "SPC d b") 'dape-breakpoint-toggle
       (kbd "SPC d D") 'dape-breakpoint-remove-all
       
       (kbd "SPC d d") 'my-dape-start-dispatch  
-      (kbd "SPC d e") 'dape-evaluate-expression 
+      
+      ;; 🚨 MODAL POPUPS 🚨
+      (kbd "SPC d e") 'my-dape-open-repl     
+      (kbd "SPC d s") 'my-dape-open-stack    
+      (kbd "SPC d l") 'my-dape-open-locals   
+      
       (kbd "SPC d q") 'dape-quit
       (kbd "SPC d c") 'dape-continue
       (kbd "SPC d n") 'dape-next
@@ -3196,14 +3235,6 @@ Displays the calculated breadcrumb path in the echo area."
                   :args []
                   :program target
                   'compile "xmake f -m debug && xmake"))))
-
-   ;; -----------------------------------------
-   ;; FUTURE LANGUAGE GOES HERE (Example: Python)
-   ;; -----------------------------------------
-   ;; ((memq major-mode '(python-mode python-ts-mode))
-   ;;  (dape (list 'command "debugpy"
-   ;;              :request "launch"
-   ;;              :program (buffer-file-name))))
 
    ;; -----------------------------------------
    ;; Fallback: If language isn't defined above, ask normally
