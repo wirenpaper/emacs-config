@@ -3201,12 +3201,12 @@ Displays the calculated breadcrumb path in the echo area."
   (my-dape--pop-info "*dape-info Watch*" 'dape-info-watch-mode))
 
 (defun my-dape-quit-window ()
-  "Bulletproof exit: closes the split,
-   or goes perfectly back to code if full-screen."
+  "Bulletproof exit: safely bury the buffer and return perfectly to the code."
   (interactive)
-  (if (one-window-p)
-      (previous-buffer)   ;; Mathematically step back one step to your C++ file
-    (delete-window)))     ;; Close the window if there happens to be a split
+  ;; NEVER delete the window because we didn't split the screen to open it.
+  ;; Just bury the Dape buffer to the bottom of the list, which instantly
+  ;; reveals the C++ code you were just looking at.
+  (bury-buffer))
 
 ;; =========================================
 ;; Dape Global Debug Keybindings
