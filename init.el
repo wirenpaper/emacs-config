@@ -3154,7 +3154,8 @@ Displays the calculated breadcrumb path in the echo area."
 
 (defun my-dape--pop-info (buf-name mode-fn)
   "Safely open a Dape info buffer,
-   forcing initialization so it's never a dummy file."
+   forcing initialization so it's
+   never a dummy file."
   (save-window-excursion (ignore-errors (dape-info)))
   (let ((buf (get-buffer-create buf-name)))
     (with-current-buffer buf
@@ -3164,12 +3165,12 @@ Displays the calculated breadcrumb path in the echo area."
     (pop-to-buffer-same-window buf)))
 
 (defun my-dape-open-repl ()
-  "Switch to the Dape REPL perfectly in the same window."
+  "Switch to the live Dape REPL perfectly in the same window."
   (interactive)
-  ;; This temporarily forces Emacs to open the REPL in the current window,
-  ;; without breaking Dape's internal initialization logic.
-  (let ((display-buffer-overriding-action
-         '((display-buffer-same-window))))
+  ;; Intercept Dape's internal window splitting logic.
+  ;; When dape-repl tries to pop open *dape-repl*, this catches it
+  ;; and forces it into the current full window instead.
+  (let ((display-buffer-alist '(("\\*dape-repl\\*" (display-buffer-same-window)))))
     (dape-repl)))
 
 (defun my-dape-open-stack ()
@@ -3199,6 +3200,14 @@ Displays the calculated breadcrumb path in the echo area."
   (interactive)
   (my-dape--pop-info "*dape-info Watch*" 'dape-info-watch-mode))
 
+(defun my-dape-quit-window ()
+  "Bulletproof exit: closes the split,
+   or goes perfectly back to code if full-screen."
+  (interactive)
+  (if (one-window-p)
+      (previous-buffer)   ;; Mathematically step back one step to your C++ file
+    (delete-window)))     ;; Close the window if there happens to be a split
+
 ;; =========================================
 ;; Dape Global Debug Keybindings
 ;; =========================================
@@ -3206,13 +3215,18 @@ Displays the calculated breadcrumb path in the echo area."
 (with-eval-after-load 'evil
   (with-eval-after-load 'dape
     
-    ;; 🚨 Force 'q' to close ANY Dape window in Evil Normal mode
-    (evil-define-key 'normal 'dape-repl-mode (kbd "q") 'quit-window)
-    (evil-define-key 'normal 'dape-info-stack-mode (kbd "q") 'quit-window)
-    (evil-define-key 'normal 'dape-info-scope-mode (kbd "q") 'quit-window)
-    (evil-define-key 'normal 'dape-info-breakpoints-mode (kbd "q") 'quit-window)
-    (evil-define-key 'normal 'dape-info-threads-mode (kbd "q") 'quit-window)
-    (evil-define-key 'normal 'dape-info-watch-mode (kbd "q") 'quit-window)
+    ;; Info buffers are read-only, so Evil normally accepts these:
+    (evil-define-key 'normal 'dape-info-stack-mode (kbd "q") 'my-dape-quit-window)
+    (evil-define-key 'normal 'dape-info-scope-mode (kbd "q") 'my-dape-quit-window)
+    (evil-define-key 'normal 'dape-info-breakpoints-mode (kbd "q") 'my-dape-quit-window)
+    (evil-define-key 'normal 'dape-info-threads-mode (kbd "q") 'my-dape-quit-window)
+    (evil-define-key 'normal 'dape-info-watch-mode (kbd "q") 'my-dape-quit-window)
+
+    ;; 🚨 REPL TERMINAL FIX 🚨
+    ;; Force 'q' strictly into the REPL local map to override Evil's terminal hijacking
+    (add-hook 'dape-repl-mode-hook
+              (lambda ()
+                (evil-local-set-key 'normal (kbd "q") 'my-dape-quit-window)))
 
     (evil-define-key 'normal 'global
       (kbd "SPC d b") 'dape-breakpoint-toggle
