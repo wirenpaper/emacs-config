@@ -139,7 +139,7 @@
 ;; ==========================================
 
 (defvar my/font-typewriter-name "CMU Typewriter Text")
-(defvar my/font-retro-name "AcPlus IBM VGA 8x16:pixelsize=32:antialias=true:autohint=false")
+(defvar my/font-retro-name "AcPlus IBM VGA 9x16:pixelsize=32:antialias=true:autohint=false")
 
 (defvar my/font-arabic-name "Scheherazade New")
 (defvar my/font-symbol-name (seq-find (lambda (f) (string-match-p "JetBrains\\|Hack" f)) 
@@ -196,7 +196,7 @@
                       :weight 'normal)
   (my/setup-font-fallbacks)
   (clear-face-cache t)
-  (message "Font: AcPlus IBM VGA 8x16 (Retro)"))
+  (message "Font: AcPlus IBM VGA 9x16 (Retro)"))
 
 ;; 1. Apply Typewriter as the default on startup
 (my/font-typewriter)
@@ -3117,3 +3117,76 @@ Displays the calculated breadcrumb path in the echo area."
   :ensure t
   :config
   (xclip-mode 1))
+
+
+;; =========================================
+;; dape settings
+;; =========================================
+
+(use-package dape
+  :ensure t
+  :hook
+  (kill-emacs . dape-breakpoint-save)
+  (after-init . dape-breakpoint-load)
+  (dape-quit-hook . dape-kill-buffers)
+
+  :config
+  (dape-breakpoint-global-mode)
+  (setq dape-buffer-window-arrangement 'right)
+
+  (setq dape-info-buffer-window-groups
+        '((dape-info-scope-mode dape-info-watch-mode)
+          (dape-info-stack-mode dape-info-modules-mode dape-info-sources-mode)
+          (dape-info-breakpoints-mode dape-info-threads-mode))))
+
+(with-eval-after-load 'evil
+  (with-eval-after-load 'dape
+
+    (defun my-dape-fast-start ()
+      "Silently start xmake-dbg for C/C++, otherwise ask."
+      (interactive)
+      (if (memq major-mode '(c-mode c-ts-mode c++-mode c++-ts-mode))
+          (let* ((cwd (dape-cwd))
+                 ;; Your exact paths:
+                 (build-path (expand-file-name "build/linux/x86_64/debug/my_modules_app" cwd))
+                 (bin-path   (expand-file-name "bin/my_modules_app" cwd))
+                 (target     (if (file-exists-p bin-path) bin-path build-path)))
+            
+            ;; 🚨 Prevents the blank screen hang if the binary isn't built yet
+            (unless (file-exists-p target)
+              (error "🚨 FATAL DAPE ERROR: The binary DOES NOT EXIST at: %s" target))
+            
+            ;; 🚨 THE FIX: We build the config list manually with evaluated variables (cwd and target).
+            ;; Dape doesn't have to evaluate anything, meaning the json-value-p crash is physically impossible.
+            (dape (list 'command "gdb"
+                        'command-args '("--interpreter=dap")
+                        :request "launch"
+                        :cwd cwd         ;; Passed as a pure string!
+                        :args []         ;; Fixes GDB DAP silent crash
+                        :program target  ;; Passed as a pure string!
+                        'compile "xmake f -m debug && xmake")))
+        
+        ;; If NOT in C/C++, fallback to asking normally
+        (call-interactively 'dape)))
+
+    (evil-define-key 'normal 'global
+      (kbd "SPC d b") 'dape-breakpoint-toggle
+      (kbd "SPC d D") 'dape-breakpoint-remove-all
+      (kbd "SPC d d") 'my-dape-fast-start         ;; Runs custom function
+      (kbd "SPC d q") 'dape-quit
+      (kbd "SPC d c") 'dape-continue
+      (kbd "SPC d n") 'dape-next
+      (kbd "SPC d i") 'dape-step-in
+      (kbd "SPC d o") 'dape-step-out
+      (kbd "SPC d r") 'dape-restart
+      )))
+
+;; ==========================================
+;; Auto-close compilation window on success
+;; ==========================================
+(add-hook 'compilation-finish-functions
+          (lambda (buf str)
+            (when (string-match "finished" str)
+              (let ((win (get-buffer-window buf)))
+                (when win
+                  (delete-window win))))))
