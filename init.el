@@ -3137,7 +3137,6 @@ Displays the calculated breadcrumb path in the echo area."
   (setq dape-buffer-window-arrangement nil)
   
   ;; 2. Stop Dape from automatically popping open windows when debugging starts
-  ;; (Updated for Dape >= 0.13.0)
   (remove-hook 'dape-start-hook 'dape-info)
   (remove-hook 'dape-start-hook 'dape-repl))
 
@@ -3153,43 +3152,52 @@ Displays the calculated breadcrumb path in the echo area."
 ;; Dape Modal Popup Helpers
 ;; =========================================
 
+(defun my-dape--pop-info (buf-name mode-fn)
+  "Safely open a Dape info buffer,
+   forcing initialization so it's never a dummy file."
+  (save-window-excursion (ignore-errors (dape-info)))
+  (let ((buf (get-buffer-create buf-name)))
+    (with-current-buffer buf
+      ;; Force the buffer into the correct Dape UI mode so it's never a blank text file
+      (unless (derived-mode-p mode-fn)
+        (funcall mode-fn)))
+    (pop-to-buffer-same-window buf)))
+
 (defun my-dape-open-repl ()
-  "Switch to the Dape REPL where you can type \"p diag\"."
+  "Switch to the Dape REPL perfectly in the same window."
   (interactive)
-  (save-window-excursion (dape-repl))
-  (pop-to-buffer-same-window "*dape-repl*"))
+  ;; This temporarily forces Emacs to open the REPL in the current window,
+  ;; without breaking Dape's internal initialization logic.
+  (let ((display-buffer-overriding-action
+         '((display-buffer-same-window))))
+    (dape-repl)))
 
 (defun my-dape-open-stack ()
   "Switch to ONLY the Stack Trace window."
   (interactive)
-  (save-window-excursion (dape-info)) 
-  (pop-to-buffer-same-window "*dape-info Stack*"))
+  (my-dape--pop-info "*dape-info Stack*" 'dape-info-stack-mode))
 
 (defun my-dape-open-locals ()
   "Switch to ONLY the Locals window to inspect variables."
   (interactive)
-  (save-window-excursion (dape-info))
   (if (get-buffer "*dape-info Locals*")
-      (pop-to-buffer-same-window "*dape-info Locals*")
-    (pop-to-buffer-same-window "*dape-info Scope*")))
+      (my-dape--pop-info "*dape-info Locals*" 'dape-info-scope-mode)
+    (my-dape--pop-info "*dape-info Scope*" 'dape-info-scope-mode)))
 
 (defun my-dape-open-breakpoints ()
   "Switch to ONLY the Breakpoints window."
   (interactive)
-  (save-window-excursion (dape-info))
-  (pop-to-buffer-same-window "*dape-info Breakpoints*"))
+  (my-dape--pop-info "*dape-info Breakpoints*" 'dape-info-breakpoints-mode))
 
 (defun my-dape-open-threads ()
   "Switch to ONLY the Threads window."
   (interactive)
-  (save-window-excursion (dape-info))
-  (pop-to-buffer-same-window "*dape-info Threads*"))
+  (my-dape--pop-info "*dape-info Threads*" 'dape-info-threads-mode))
 
 (defun my-dape-open-watch ()
   "Switch to ONLY the Watch window."
   (interactive)
-  (save-window-excursion (dape-info))
-  (pop-to-buffer-same-window "*dape-info Watch*"))
+  (my-dape--pop-info "*dape-info Watch*" 'dape-info-watch-mode))
 
 ;; =========================================
 ;; Dape Global Debug Keybindings
@@ -3198,11 +3206,13 @@ Displays the calculated breadcrumb path in the echo area."
 (with-eval-after-load 'evil
   (with-eval-after-load 'dape
     
-    ;; Make 'q' instantly close the REPL window when in Evil Normal mode
-    (evil-define-key 'normal dape-repl-mode-map (kbd "q") 'quit-window)
-    
-    ;; Note: 'q' already works out-of-the-box for Stack and Locals windows 
-    ;; because Emacs automatically makes info buffers read-only.
+    ;; 🚨 Force 'q' to close ANY Dape window in Evil Normal mode
+    (evil-define-key 'normal 'dape-repl-mode (kbd "q") 'quit-window)
+    (evil-define-key 'normal 'dape-info-stack-mode (kbd "q") 'quit-window)
+    (evil-define-key 'normal 'dape-info-scope-mode (kbd "q") 'quit-window)
+    (evil-define-key 'normal 'dape-info-breakpoints-mode (kbd "q") 'quit-window)
+    (evil-define-key 'normal 'dape-info-threads-mode (kbd "q") 'quit-window)
+    (evil-define-key 'normal 'dape-info-watch-mode (kbd "q") 'quit-window)
 
     (evil-define-key 'normal 'global
       (kbd "SPC d b") 'dape-breakpoint-toggle
