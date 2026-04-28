@@ -3200,6 +3200,49 @@ Displays the calculated breadcrumb path in the echo area."
   (interactive)
   (my-dape--pop-info "*dape-info Watch*" 'dape-info-watch-mode))
 
+(defun my-dape-goto-stopped-line ()
+  "Jump perfectly back to the active debugger line (where the arrow is).
+Reads Emacs' native fringe arrow markers directly, completely avoiding 
+Dape's internal API to prevent runtime crashes and compiler warnings."
+  (interactive)
+  (let ((target-buf nil)
+        (target-pos nil))
+    (catch 'found
+      
+      ;; METHOD 1: Check standard Emacs fringe arrows
+      ;; Dape pushes its execution marker here so Emacs can draw the visual arrow.
+      (dolist (var overlay-arrow-variable-list)
+        (when (and (boundp var)
+                   (markerp (symbol-value var))
+                   (marker-buffer (symbol-value var)))
+          (let ((m (symbol-value var)))
+            ;; Ignore markers in weird popup buffers, only target real files
+            (when (buffer-file-name (marker-buffer m))
+              (setq target-buf (marker-buffer m)
+                    target-pos (marker-position m))
+              (throw 'found t)))))
+      
+      ;; METHOD 2: Visually scan for Dape overlays (Fallback)
+      (dolist (buf (buffer-list))
+        (when (buffer-file-name buf)
+          (with-current-buffer buf
+            (dolist (ov (overlays-in (point-min) (point-max)))
+              (let ((cat  (overlay-get ov 'category))
+                    (face (overlay-get ov 'face)))
+                (when (or (and cat  (string-match-p "dape" (symbol-name cat)))
+                          (and face (string-match-p "dape" (symbol-name face))))
+                  (setq target-buf buf
+                        target-pos (overlay-start ov))
+                  (throw 'found t))))))))
+    
+    ;; EXECUTE JUMP
+    (if target-buf
+        (progn
+          (switch-to-buffer target-buf)
+          (goto-char target-pos)
+          (recenter))
+      (message "Dape: Could not locate the active debugging arrow marker."))))
+
 (defun my-dape-quit-window ()
   "Bulletproof exit: return perfectly to the code.
 Skips over multiple Dape modal hops to land directly on the source."
@@ -3254,7 +3297,7 @@ Skips over multiple Dape modal hops to land directly on the source."
                 (evil-local-set-key 'normal (kbd "SPC d") 'hydra-dape/body)
                 (evil-local-set-key 'motion (kbd "SPC d") 'hydra-dape/body)))
 
-    ;; -----------------------------------------
+;; -----------------------------------------
     ;; THE DAPE HYDRA
     ;; -----------------------------------------
     (defhydra hydra-dape (:color pink :hint nil)
@@ -3264,7 +3307,7 @@ Skips over multiple Dape modal hops to land directly on the source."
 _d_: Start         _n_: Next          _b_: Toggle BP       _e_: REPL
 _r_: Restart       _i_: Step In       _D_: Clear All       _l_: Locals
 _c_: Continue      _o_: Step Out      _B_: BP List         _w_: Watch
-_q_: Stop/Quit     ^ ^                ^ ^                  _s_: Stack
+_q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
 ^ ^                ^ ^                ^ ^                  _t_: Threads
 "
       ;; Execution
@@ -3277,6 +3320,7 @@ _q_: Stop/Quit     ^ ^                ^ ^                  _s_: Stack
       ("n" dape-next)
       ("i" dape-step-in)
       ("o" dape-step-out)
+      ("a" my-dape-goto-stopped-line :color blue)
 
       ;; Breakpoints
       ("b" dape-breakpoint-toggle)
