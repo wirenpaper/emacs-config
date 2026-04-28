@@ -3216,18 +3216,29 @@ Displays the calculated breadcrumb path in the echo area."
   (with-eval-after-load 'dape
     (require 'hydra)
     
-    ;; Info buffers are read-only, so Evil normally accepts these:
-    (evil-define-key 'normal 'dape-info-stack-mode (kbd "q") 'my-dape-quit-window)
-    (evil-define-key 'normal 'dape-info-scope-mode (kbd "q") 'my-dape-quit-window)
-    (evil-define-key 'normal 'dape-info-breakpoints-mode (kbd "q") 'my-dape-quit-window)
-    (evil-define-key 'normal 'dape-info-threads-mode (kbd "q") 'my-dape-quit-window)
-    (evil-define-key 'normal 'dape-info-watch-mode (kbd "q") 'my-dape-quit-window)
+    ;; FIX: Read-only buffers start in 'motion' state, not 'normal'.
+    ;; This hook forces highest-priority local keys for BOTH states,
+    ;; ensuring 'SPC d' is never ignored or swallowed by Emacs scrolling.
+    ;; (Using functions inside a hook also prevents all byte-compiler warnings)
+    (defun my-dape-setup-modal-keys ()
+      "Force 'q' and 'SPC d' strictly into the local buffer map."
+      (evil-local-set-key 'normal (kbd "q") 'my-dape-quit-window)
+      (evil-local-set-key 'normal (kbd "SPC d") 'hydra-dape/body)
+      (evil-local-set-key 'motion (kbd "q") 'my-dape-quit-window)
+      (evil-local-set-key 'motion (kbd "SPC d") 'hydra-dape/body))
+
+    (add-hook 'dape-info-stack-mode-hook 'my-dape-setup-modal-keys)
+    (add-hook 'dape-info-scope-mode-hook 'my-dape-setup-modal-keys)
+    (add-hook 'dape-info-breakpoints-mode-hook 'my-dape-setup-modal-keys)
+    (add-hook 'dape-info-threads-mode-hook 'my-dape-setup-modal-keys)
+    (add-hook 'dape-info-watch-mode-hook 'my-dape-setup-modal-keys)
 
     ;; 🚨 REPL TERMINAL FIX 🚨
-    ;; Force 'q' strictly into the REPL local map to override Evil's terminal hijacking
     (add-hook 'dape-repl-mode-hook
               (lambda ()
-                (evil-local-set-key 'normal (kbd "q") 'my-dape-quit-window)))
+                (evil-local-set-key 'normal (kbd "q") 'my-dape-quit-window)
+                (evil-local-set-key 'normal (kbd "SPC d") 'hydra-dape/body)
+                (evil-local-set-key 'motion (kbd "SPC d") 'hydra-dape/body)))
 
     ;; -----------------------------------------
     ;; THE DAPE HYDRA
@@ -3269,7 +3280,7 @@ _q_: Stop/Quit     ^ ^                ^ ^                  _s_: Stack
       ("<escape>" nil "cancel" :color blue)
       ("C-g" nil "cancel" :color blue))
 
-    ;; Bind SPC d to open the Hydra
+    ;; Bind SPC d to open the Hydra globally for normal code buffers
     (evil-define-key 'normal 'global (kbd "SPC d") 'hydra-dape/body)))
 
 ;; =========================================
