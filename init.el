@@ -3232,10 +3232,10 @@ Skips over multiple Dape modal hops to land directly on the source."
     
     ;; FIX: Read-only buffers start in 'motion' state, not 'normal'.
     ;; This hook forces highest-priority local keys for BOTH states,
-    ;; ensuring 'SPC d' is never ignored or swallowed by Emacs scrolling.
+    ;; ensuring SPC d is never ignored or swallowed by Emacs scrolling.
     ;; (Using functions inside a hook also prevents all byte-compiler warnings)
     (defun my-dape-setup-modal-keys ()
-      "Force 'q' and 'SPC d' strictly into the local buffer map."
+      "Force `q' and `SPC d' strictly into the local buffer map."
       (evil-local-set-key 'normal (kbd "q") 'my-dape-quit-window)
       (evil-local-set-key 'normal (kbd "SPC d") 'hydra-dape/body)
       (evil-local-set-key 'motion (kbd "q") 'my-dape-quit-window)
