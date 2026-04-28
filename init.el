@@ -3335,8 +3335,7 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
       ("w" my-dape-open-watch :color blue)
 
       ;; Cancel
-      ("<escape>" nil "cancel" :color blue)
-      ("C-g" nil "cancel" :color blue))
+      ("<escape>" nil "cancel" :color blue))
 
     ;; Bind SPC d to open the Hydra globally for normal code buffers
     (evil-define-key 'normal 'global (kbd "SPC d") 'hydra-dape/body)))
