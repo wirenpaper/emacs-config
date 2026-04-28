@@ -3201,12 +3201,26 @@ Displays the calculated breadcrumb path in the echo area."
   (my-dape--pop-info "*dape-info Watch*" 'dape-info-watch-mode))
 
 (defun my-dape-quit-window ()
-  "Bulletproof exit: safely bury the buffer and return perfectly to the code."
+  "Bulletproof exit: return perfectly to the code.
+Skips over multiple Dape modal hops to land directly on the source."
   (interactive)
-  ;; NEVER delete the window because we didn't split the screen to open it.
-  ;; Just bury the Dape buffer to the bottom of the list, which instantly
-  ;; reveals the C++ code you were just looking at.
-  (bury-buffer))
+  (let ((source-buf nil))
+    ;; 1. Look through Emacs' history of recently used buffers
+    (catch 'found
+      (dolist (buf (buffer-list))
+        (let ((name (buffer-name buf)))
+          ;; Ignore hidden buffers (start with space) and ALL Dape buffers
+          (unless (or (string-prefix-p " " name)
+                      (string-prefix-p "*dape-" name))
+            (setq source-buf buf)
+            (throw 'found t)))))
+    
+    ;; 2. Push the current Dape buffer to the bottom of the list
+    (bury-buffer)
+    
+    ;; 3. Instantly switch straight back to the source code buffer
+    (when source-buf
+      (switch-to-buffer source-buf))))
 
 ;; =========================================
 ;; Dape Global Debug Keybindings
