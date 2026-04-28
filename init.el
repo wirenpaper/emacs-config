@@ -3281,8 +3281,11 @@ Skips over multiple Dape modal hops to land directly on the source."
       "Force `q' and `SPC d' strictly into the local buffer map."
       (evil-local-set-key 'normal (kbd "q") 'my-dape-quit-window)
       (evil-local-set-key 'normal (kbd "SPC d") 'hydra-dape/body)
+      (evil-local-set-key 'normal (kbd "SPC a") 'hydra-speed-dial/body) ;; <-- Added
+
       (evil-local-set-key 'motion (kbd "q") 'my-dape-quit-window)
-      (evil-local-set-key 'motion (kbd "SPC d") 'hydra-dape/body))
+      (evil-local-set-key 'motion (kbd "SPC d") 'hydra-dape/body)
+      (evil-local-set-key 'motion (kbd "SPC a") 'hydra-speed-dial/body)) ;; <-- Added
 
     (add-hook 'dape-info-stack-mode-hook 'my-dape-setup-modal-keys)
     (add-hook 'dape-info-scope-mode-hook 'my-dape-setup-modal-keys)
@@ -3295,7 +3298,10 @@ Skips over multiple Dape modal hops to land directly on the source."
               (lambda ()
                 (evil-local-set-key 'normal (kbd "q") 'my-dape-quit-window)
                 (evil-local-set-key 'normal (kbd "SPC d") 'hydra-dape/body)
-                (evil-local-set-key 'motion (kbd "SPC d") 'hydra-dape/body)))
+                (evil-local-set-key 'normal (kbd "SPC a") 'hydra-speed-dial/body) ;; <-- Added
+
+                (evil-local-set-key 'motion (kbd "SPC d") 'hydra-dape/body)
+                (evil-local-set-key 'motion (kbd "SPC a") 'hydra-speed-dial/body))) ;; <-- Added
 
 ;; -----------------------------------------
     ;; THE DAPE HYDRA
