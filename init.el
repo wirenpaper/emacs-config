@@ -3214,6 +3214,7 @@ Displays the calculated breadcrumb path in the echo area."
 
 (with-eval-after-load 'evil
   (with-eval-after-load 'dape
+    (require 'hydra)
     
     ;; Info buffers are read-only, so Evil normally accepts these:
     (evil-define-key 'normal 'dape-info-stack-mode (kbd "q") 'my-dape-quit-window)
@@ -3228,26 +3229,48 @@ Displays the calculated breadcrumb path in the echo area."
               (lambda ()
                 (evil-local-set-key 'normal (kbd "q") 'my-dape-quit-window)))
 
-    (evil-define-key 'normal 'global
-      (kbd "SPC d b") 'dape-breakpoint-toggle
-      (kbd "SPC d D") 'dape-breakpoint-remove-all
+    ;; -----------------------------------------
+    ;; THE DAPE HYDRA
+    ;; -----------------------------------------
+    (defhydra hydra-dape (:color pink :hint nil)
+      "
+^EXECUTION^        ^STEPPING^         ^BREAKPOINTS^        ^MODAL POPUPS^
+^^^^^^^^----------------------------------------------------------------------
+_d_: Start         _n_: Next          _b_: Toggle BP       _e_: REPL
+_r_: Restart       _i_: Step In       _D_: Clear All       _l_: Locals
+_c_: Continue      _o_: Step Out      _B_: BP List         _w_: Watch
+_q_: Stop/Quit     ^ ^                ^ ^                  _s_: Stack
+^ ^                ^ ^                ^ ^                  _t_: Threads
+"
+      ;; Execution
+      ("d" my-dape-start-dispatch :color blue)
+      ("q" dape-quit :color blue)
       
-      (kbd "SPC d d") 'my-dape-start-dispatch  
-      
-      ;; 🚨 MODAL POPUPS 🚨
-      (kbd "SPC d e") 'my-dape-open-repl       ;; Evaluate / REPL
-      (kbd "SPC d s") 'my-dape-open-stack      ;; Stack trace
-      (kbd "SPC d l") 'my-dape-open-locals     ;; Local variables
-      (kbd "SPC d B") 'my-dape-open-breakpoints;; Manage breakpoints
-      (kbd "SPC d t") 'my-dape-open-threads    ;; Threads
-      (kbd "SPC d w") 'my-dape-open-watch      ;; Watch expressions
-      
-      (kbd "SPC d q") 'dape-quit
-      (kbd "SPC d c") 'dape-continue
-      (kbd "SPC d n") 'dape-next
-      (kbd "SPC d i") 'dape-step-in
-      (kbd "SPC d o") 'dape-step-out
-      (kbd "SPC d r") 'dape-restart)))
+      ;; Stepping & Flow
+      ("r" dape-restart)
+      ("c" dape-continue)
+      ("n" dape-next)
+      ("i" dape-step-in)
+      ("o" dape-step-out)
+
+      ;; Breakpoints
+      ("b" dape-breakpoint-toggle)
+      ("D" dape-breakpoint-remove-all)
+
+      ;; Modal Popups (Maps strictly to your functions, closes hydra on trigger)
+      ("e" my-dape-open-repl :color blue)
+      ("s" my-dape-open-stack :color blue)
+      ("l" my-dape-open-locals :color blue)
+      ("B" my-dape-open-breakpoints :color blue)
+      ("t" my-dape-open-threads :color blue)
+      ("w" my-dape-open-watch :color blue)
+
+      ;; Cancel
+      ("<escape>" nil "cancel" :color blue)
+      ("C-g" nil "cancel" :color blue))
+
+    ;; Bind SPC d to open the Hydra
+    (evil-define-key 'normal 'global (kbd "SPC d") 'hydra-dape/body)))
 
 ;; =========================================
 ;; Dape Language-Specific Debug Configurations
