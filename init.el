@@ -3347,6 +3347,22 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
     (evil-define-key 'normal 'global (kbd "SPC d") 'hydra-dape/body)))
 
 ;; =========================================
+;; Catch2 Smart Tag Extractor
+;; =========================================
+(defun my/get-current-test-tag ()
+  "Dynamically generate a Catch2 tag based on the current filename.
+E.g., `test_node.cpp' -> `[node]'. `list.cppm' -> `[list]'.
+`main.cpp' -> run all."
+  (when-let* ((file (buffer-file-name))
+              (base (file-name-base file)))
+    (if (string= base "main")
+        nil ;; Run everything if triggered from main.cpp
+      (let ((tag (if (string-prefix-p "test_" base)
+                     (substring base 5)
+                   base)))
+        (format "[%s]" tag)))))
+
+;; =========================================
 ;; Dape Language-Specific Debug Configurations
 ;; =========================================
 
@@ -3360,22 +3376,18 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
    ;; -----------------------------------------
    ((memq major-mode '(c-mode c-ts-mode c++-mode c++-ts-mode))
     (let* ((cwd (dape-cwd))
-           (build-path (expand-file-name "build/linux/x86_64/debug/my_modules_app" cwd))
-           (bin-path   (expand-file-name "bin/my_modules_app" cwd))
-           (target     (if (file-exists-p bin-path) bin-path build-path)))
-      
-      ;; Safety Check
-      (unless (file-exists-p target)
-        (error "🚨 FATAL DAPE ERROR: The binary DOES NOT EXIST at: %s" target))
+           (bin-path (expand-file-name "bin/my_tests" cwd))
+           (smart-tag (my/get-current-test-tag))
+           (dape-args (if smart-tag (vector smart-tag) [])))
       
       ;; Execute Dape
       (dape (list 'command "gdb"
                   'command-args '("--interpreter=dap")
                   :request "launch"
                   :cwd cwd
-                  :args []
-                  :program target
-                  'compile "xmake f -m debug && xmake"))))
+                  :args dape-args ;; <-- Automatically injects ["[list]"] or ["[node]"]
+                  :program bin-path ;; We know xmake puts it in bin/my_tests now
+                  'compile "xmake f -m debug && xmake build my_tests"))))
 
    ;; -----------------------------------------
    ;; Fallback: If language isn't defined above, ask normally
