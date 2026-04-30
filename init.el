@@ -3303,7 +3303,7 @@ Skips over multiple Dape modal hops to land directly on the source."
                 (evil-local-set-key 'motion (kbd "SPC d") 'hydra-dape/body)
                 (evil-local-set-key 'motion (kbd "SPC a") 'hydra-speed-dial/body))) ;; <-- Added
 
-;; -----------------------------------------
+    ;; -----------------------------------------
     ;; THE DAPE HYDRA
     ;; -----------------------------------------
     (defhydra hydra-dape (:color pink :hint nil)
@@ -3347,27 +3347,47 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
     (evil-define-key 'normal 'global (kbd "SPC d") 'hydra-dape/body)))
 
 ;; =========================================
-;; Catch2 Smart Tag Extractor
+;; Catch2 Interactive Target Selector
 ;; =========================================
-(defun my/get-current-test-tag ()
-  "Dynamically generate a Catch2 tag based on the current filename.
-E.g., `test_node.cpp' -> `[node]'. `list.cppm' -> `[list]'.
-`main.cpp' -> run all."
-  (when-let* ((file (buffer-file-name))
-              (base (file-name-base file)))
-    (if (string= base "main")
-        nil ;; Run everything if triggered from main.cpp
-      (let ((tag (if (string-prefix-p "test_" base)
-                     (substring base 5)
-                   base)))
-        (format "[%s]" tag)))))
+(defun my-dape-prompt-test-target (cwd)
+  "Prompt user for Catch2 test target based on test_*.cpp files.
+Smartly defaults to the tag matching the current file, if any."
+  (let* ((files (ignore-errors (directory-files cwd nil "^test_.*\\.cpp$")))
+         ;; Convert "test_node.cpp" -> "[node]"
+         (tags (mapcar (lambda (f)
+                         (let ((base (file-name-base f)))
+                           (format "[%s]" (if (string-prefix-p "test_" base)
+                                              (substring base 5)
+                                            base))))
+                       files))
+         ;; Build our menu options
+         (options (append '("All Tests (main)") tags))
+         ;; Figure out the best default option based on current buffer
+         (current-base (when-let ((file (buffer-file-name)))
+                         (file-name-base file)))
+         (default-choice
+          (cond
+           ((not current-base) "All Tests (main)")
+           ((string-prefix-p "test_" current-base)
+            (format "[%s]" (substring current-base 5)))
+           ((member (format "[%s]" current-base) tags)
+            (format "[%s]" current-base))
+           (t "All Tests (main)")))
+         ;; Prompt the user with completing-read
+         (choice (completing-read "Select Test Target: " options nil t nil nil default-choice)))
+    
+    ;; Return nil if they picked main (run all), otherwise return the tag string
+    (if (string= choice "All Tests (main)")
+        nil
+      choice)))
 
 ;; =========================================
 ;; Dape Language-Specific Debug Configurations
 ;; =========================================
 
 (defun my-dape-start-dispatch ()
-  "Silently start the debugger based on the current language."
+  "Silently start the debugger based on the current language.
+Prompts the user for which tests to run in C++."
   (interactive)
   (cond
 
@@ -3377,16 +3397,18 @@ E.g., `test_node.cpp' -> `[node]'. `list.cppm' -> `[list]'.
    ((memq major-mode '(c-mode c-ts-mode c++-mode c++-ts-mode))
     (let* ((cwd (dape-cwd))
            (bin-path (expand-file-name "bin/my_tests" cwd))
-           (smart-tag (my/get-current-test-tag))
-           (dape-args (if smart-tag (vector smart-tag) [])))
+           ;; Trigger the interactive menu
+           (selected-tag (my-dape-prompt-test-target cwd))
+           ;; Format arguments for Dape
+           (dape-args (if selected-tag (vector selected-tag) [])))
       
       ;; Execute Dape
       (dape (list 'command "gdb"
                   'command-args '("--interpreter=dap")
                   :request "launch"
                   :cwd cwd
-                  :args dape-args ;; <-- Automatically injects ["[list]"] or ["[node]"]
-                  :program bin-path ;; We know xmake puts it in bin/my_tests now
+                  :args dape-args ;; Injects the choice from the menu
+                  :program bin-path
                   'compile "xmake f -m debug && xmake build my_tests"))))
 
    ;; -----------------------------------------
