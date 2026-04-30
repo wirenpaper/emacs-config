@@ -3353,33 +3353,35 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
   "Prompt user for Catch2 test target based on test_*.cpp files.
 Smartly defaults to the tag matching the current file, if any."
   (let* ((files (ignore-errors (directory-files cwd nil "^test_.*\\.cpp$")))
-         ;; Convert "test_node.cpp" -> "[node]"
-         (tags (mapcar (lambda (f)
-                         (let ((base (file-name-base f)))
-                           (format "[%s]" (if (string-prefix-p "test_" base)
-                                              (substring base 5)
-                                            base))))
-                       files))
-         ;; Build our menu options
-         (options (append '("All Tests (main)") tags))
+         ;; Convert "test_node.cpp" -> "node"
+         (raw-tags (mapcar (lambda (f)
+                             (let ((base (file-name-base f)))
+                               (if (string-prefix-p "test_" base)
+                                   (substring base 5)
+                                 base)))
+                           files))
+         ;; Build our menu options: ("main" "list" "node")
+         (options (cons "main" raw-tags))
+         
          ;; Figure out the best default option based on current buffer
          (current-base (when-let ((file (buffer-file-name)))
                          (file-name-base file)))
          (default-choice
           (cond
-           ((not current-base) "All Tests (main)")
+           ((not current-base) "main")
            ((string-prefix-p "test_" current-base)
-            (format "[%s]" (substring current-base 5)))
-           ((member (format "[%s]" current-base) tags)
-            (format "[%s]" current-base))
-           (t "All Tests (main)")))
+            (substring current-base 5))
+           ((member current-base raw-tags)
+            current-base)
+           (t "main")))
+         
          ;; Prompt the user with completing-read
          (choice (completing-read "Select Test Target: " options nil t nil nil default-choice)))
     
-    ;; Return nil if they picked main (run all), otherwise return the tag string
-    (if (string= choice "All Tests (main)")
-        nil
-      choice)))
+    ;; Process the choice for Catch2
+    (if (string= choice "main")
+        nil  ;; Return nil to run everything
+      (format "[%s]" choice)))) ;; Re-add the brackets Catch2 needs (e.g., "[list]")
 
 ;; =========================================
 ;; Dape Language-Specific Debug Configurations
