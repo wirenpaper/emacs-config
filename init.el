@@ -3347,41 +3347,48 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
     (evil-define-key 'normal 'global (kbd "SPC d") 'hydra-dape/body)))
 
 ;; =========================================
-;; Catch2 Interactive Target Selector
+;; Universal Interactive Target Selector
 ;; =========================================
-(defun my-dape-prompt-test-target (cwd)
-  "Prompt user for Catch2 test target based on test_*.cpp files.
-Smartly defaults to the tag matching the current file, if any."
-  (let* ((files (ignore-errors (directory-files cwd nil "^test_.*\\.cpp$")))
-         ;; Convert "test_node.cpp" -> "node"
-         (raw-tags (mapcar (lambda (f)
-                             (let ((base (file-name-base f)))
-                               (if (string-prefix-p "test_" base)
-                                   (substring base 5)
-                                 base)))
-                           files))
-         ;; Build our menu options: ("main" "list" "node")
-         (options (cons "main" raw-tags))
-         
-         ;; Figure out the best default option based on current buffer
-         (current-base (when-let ((file (buffer-file-name)))
-                         (file-name-base file)))
-         (default-choice
-          (cond
-           ((not current-base) "main")
-           ((string-prefix-p "test_" current-base)
-            (substring current-base 5))
-           ((member current-base raw-tags)
-            current-base)
-           (t "main")))
-         
-         ;; Prompt the user with completing-read
-         (choice (completing-read "Select Test Target: " options nil t nil nil default-choice)))
+(defun my-dape-prompt-target (cwd)
+  "Prompt user to select between the App or specific Catch2 Tests.
+Smartly defaults based on the current buffer."
+  (let* ((options '())
+         (has-app (file-exists-p (expand-file-name "main.cpp" cwd)))
+         (test-files (ignore-errors (directory-files cwd nil "^test_.*\\.cpp$")))
+         (current-base (when-let ((file (buffer-file-name))) (file-name-base file))))
     
-    ;; Process the choice for Catch2
-    (if (string= choice "main")
-        nil  ;; Return nil to run everything
-      (format "[%s]" choice)))) ;; Re-add the brackets Catch2 needs (e.g., "[list]")
+    ;; 1. Add App option if main.cpp exists
+    (when has-app
+      (push "App (main.cpp)" options))
+      
+    ;; 2. Add Test options if tests exist
+    (when test-files
+      (push "Tests: ALL" options)
+      (dolist (f test-files)
+        (let ((base (file-name-base f)))
+          (when (string-prefix-p "test_" base)
+            (push (format "Tests: %s" (substring base 5)) options)))))
+            
+    ;; Reverse to keep order logical (App -> Tests: ALL -> Tests: x)
+    (setq options (nreverse options))
+    
+    ;; Safety check
+    (unless options
+      (error "🚨 FATAL: No main.cpp or test_*.cpp files found in project!"))
+      
+    ;; 3. Figure out the best default pre-selection
+    (let ((default-choice
+           (cond
+            ((string= current-base "main") "App (main.cpp)")
+            ((and current-base (string-prefix-p "test_" current-base))
+             (format "Tests: %s" (substring current-base 5)))
+            ((and current-base (member (format "Tests: %s" current-base) options))
+             (format "Tests: %s" current-base))
+            ((member "Tests: ALL" options) "Tests: ALL")
+            (t (car options)))))
+            
+      ;; Prompt the user!
+      (completing-read "Select Debug Target: " options nil t nil nil default-choice))))
 
 ;; =========================================
 ;; Dape Language-Specific Debug Configurations
@@ -3389,7 +3396,7 @@ Smartly defaults to the tag matching the current file, if any."
 
 (defun my-dape-start-dispatch ()
   "Silently start the debugger based on the current language.
-Prompts the user for which tests to run in C++."
+Prompts the user for which target/tests to run in C++."
   (interactive)
   (cond
 
@@ -3398,20 +3405,32 @@ Prompts the user for which tests to run in C++."
    ;; -----------------------------------------
    ((memq major-mode '(c-mode c-ts-mode c++-mode c++-ts-mode))
     (let* ((cwd (dape-cwd))
-           (bin-path (expand-file-name "bin/my_tests" cwd))
-           ;; Trigger the interactive menu
-           (selected-tag (my-dape-prompt-test-target cwd))
-           ;; Format arguments for Dape
-           (dape-args (if selected-tag (vector selected-tag) [])))
+           ;; Trigger the unified menu
+           (choice (my-dape-prompt-target cwd))
+           
+           ;; Route the logic based on what the user picked
+           (is-app (string= choice "App (main.cpp)"))
+           (target-name (if is-app "my_app" "my_tests"))
+           (bin-path (expand-file-name (format "bin/%s" target-name) cwd))
+           
+           ;; Format Catch2 tag if they picked a specific test
+           (catch2-tag (cond
+                        (is-app nil)
+                        ((string= choice "Tests: ALL") nil)
+                        ((string-prefix-p "Tests: " choice)
+                         (format "[%s]" (substring choice 7)))))
+           
+           (dape-args (if catch2-tag (vector catch2-tag) []))
+           (compile-cmd (format "NO_COLOR=1 xmake f -m debug && xmake build %s" target-name)))
       
       ;; Execute Dape
       (dape (list 'command "gdb"
                   'command-args '("--interpreter=dap")
                   :request "launch"
                   :cwd cwd
-                  :args dape-args ;; Injects the choice from the menu
+                  :args dape-args 
                   :program bin-path
-                  'compile "xmake f -m debug && xmake build my_tests"))))
+                  'compile compile-cmd))))
 
    ;; -----------------------------------------
    ;; Fallback: If language isn't defined above, ask normally
