@@ -3350,26 +3350,25 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
 ;; Universal Interactive Target Selector
 ;; =========================================
 (defun my-dape-prompt-target (cwd)
-  "Prompt user to select between the App or specific Catch2 Tests.
-Smartly defaults based on the current buffer."
+  "Prompt user to select between prog, all, or specific tests."
   (let* ((options '())
          (has-app (file-exists-p (expand-file-name "main.cpp" cwd)))
          (test-files (ignore-errors (directory-files cwd nil "^test_.*\\.cpp$")))
          (current-base (when-let ((file (buffer-file-name))) (file-name-base file))))
     
-    ;; 1. Add App option if main.cpp exists
+    ;; 1. Add app option if main.cpp exists
     (when has-app
-      (push "App (main.cpp)" options))
+      (push "prog" options))
       
     ;; 2. Add Test options if tests exist
     (when test-files
-      (push "Tests: ALL" options)
+      (push "all" options)
       (dolist (f test-files)
         (let ((base (file-name-base f)))
           (when (string-prefix-p "test_" base)
-            (push (format "Tests: %s" (substring base 5)) options)))))
+            (push (substring base 5) options)))))
             
-    ;; Reverse to keep order logical (App -> Tests: ALL -> Tests: x)
+    ;; Reverse to keep order logical
     (setq options (nreverse options))
     
     ;; Safety check
@@ -3379,12 +3378,12 @@ Smartly defaults based on the current buffer."
     ;; 3. Figure out the best default pre-selection
     (let ((default-choice
            (cond
-            ((string= current-base "main") "App (main.cpp)")
+            ((string= current-base "main") "prog")
             ((and current-base (string-prefix-p "test_" current-base))
-             (format "Tests: %s" (substring current-base 5)))
-            ((and current-base (member (format "Tests: %s" current-base) options))
-             (format "Tests: %s" current-base))
-            ((member "Tests: ALL" options) "Tests: ALL")
+             (substring current-base 5))
+            ((and current-base (member current-base options))
+             current-base)
+            ((member "all" options) "all")
             (t (car options)))))
             
       ;; Prompt the user!
@@ -3395,8 +3394,7 @@ Smartly defaults based on the current buffer."
 ;; =========================================
 
 (defun my-dape-start-dispatch ()
-  "Silently start the debugger based on the current language.
-Prompts the user for which target/tests to run in C++."
+  "Silently start the debugger based on the current language."
   (interactive)
   (cond
 
@@ -3409,16 +3407,15 @@ Prompts the user for which target/tests to run in C++."
            (choice (my-dape-prompt-target cwd))
            
            ;; Route the logic based on what the user picked
-           (is-app (string= choice "App (main.cpp)"))
-           (target-name (if is-app "my_app" "my_tests"))
+           (is-app (string= choice "prog"))
+           (target-name (if is-app "prog" "test"))
            (bin-path (expand-file-name (format "bin/%s" target-name) cwd))
            
            ;; Format Catch2 tag if they picked a specific test
            (catch2-tag (cond
                         (is-app nil)
-                        ((string= choice "Tests: ALL") nil)
-                        ((string-prefix-p "Tests: " choice)
-                         (format "[%s]" (substring choice 7)))))
+                        ((string= choice "all") nil)
+                        (t (format "[%s]" choice))))
            
            (dape-args (if catch2-tag (vector catch2-tag) []))
            (compile-cmd (format "NO_COLOR=1 xmake f -m debug && xmake build %s" target-name)))
