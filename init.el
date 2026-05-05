@@ -3434,3 +3434,29 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
    ;; -----------------------------------------
    (t
     (call-interactively 'dape))))
+
+;; =========================================
+;; Xmake Project Deployer (Eshell Version)
+;; =========================================
+(defun eshell/xmake_deploy ()
+  "Instantly deploy the master xmake.lua template to the current directory
+and initialize the project."
+  (let* ((template-file (expand-file-name "xmake-template.lua" user-emacs-directory))
+         (target-file   (expand-file-name "xmake.lua" default-directory)))
+    
+    ;; 1. Safety Check: Does the template exist?
+    (unless (file-exists-p template-file)
+      (error "🚨 Template not found! Please save your xmake.lua to %s" template-file))
+      
+    ;; 2. Safety Check: Does the current folder already have an xmake.lua?
+    (if (file-exists-p target-file)
+        (message "⚠️ xmake.lua already exists here! Aborting to prevent overwrite.")
+      
+      ;; 3. Copy the file
+      (copy-file template-file target-file)
+      
+      ;; 4. Silently initialize Xmake in the background
+      (let ((default-directory default-directory))
+        (call-process "xmake" nil nil nil "f" "-m" "debug"))
+        
+      (message "✅ Successfully deployed xmake.lua and initialized project!"))))
