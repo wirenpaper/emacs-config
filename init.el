@@ -2575,7 +2575,7 @@ Displays the calculated breadcrumb path in the echo area."
     (evil-define-key 'normal pdf-view-mode-map (kbd "SPC") nil)))
 
 ;; ==========================================
-;; 11. C/C++ LSP & Autocompletion (Clangd)
+;; 11. Global LSP & Autocompletion (C/C++, Python, Bash)
 ;; ==========================================
 
 ;; Add this before your Corfu and Eglot configs
@@ -2630,7 +2630,8 @@ Displays the calculated breadcrumb path in the echo area."
 ;; 2. Setup Eglot (The built-in LSP client)
 (use-package eglot
   :ensure nil
-  :hook ((c-mode c++-mode python-mode) . eglot-ensure)
+  ;; 👇 BASH ADDED HERE 👇
+  :hook ((c-mode c++-mode python-mode sh-mode bash-ts-mode) . eglot-ensure)
   :custom
   ;; Ignore BOTH auto-formatting on type and inlay hints
   (eglot-ignored-server-capabilities '(:documentOnTypeFormattingProvider :inlayHintProvider))
@@ -2642,7 +2643,7 @@ Displays the calculated breadcrumb path in the echo area."
   (with-eval-after-load 'jsonrpc
     (fset #'jsonrpc--log-event #'ignore))
 
-  ;; CRITICAL: Tell Clangd to enable C++ modules AND inject our Linux formatting rules directly!
+  ;; C/C++: Tell Clangd to enable C++ modules AND inject our Linux formatting rules directly!
   (add-to-list 'eglot-server-programs
                '((c++-mode c-mode)
                  . ("clangd"
