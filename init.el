@@ -3348,116 +3348,35 @@ _q_: Stop/Quit     _a_: Go to Arrow   ^ ^                  _s_: Stack
     (evil-define-key 'normal 'global (kbd "SPC d") 'hydra-dape/body)))
 
 ;; =========================================
-;; Universal Interactive Target Selector
+;; Universal Dape Dispatcher System
 ;; =========================================
-(defun my-dape-prompt-target (cwd)
-  "Prompt user to select between prog, all, or specific tests."
-  (let* ((options '())
-         (has-app (file-exists-p (expand-file-name "main.cpp" cwd)))
-         (test-files (ignore-errors (directory-files cwd nil "^test_.*\\.cpp$")))
-         (current-base (when-let ((file (buffer-file-name))) (file-name-base file))))
-    
-    ;; 1. Add app option if main.cpp exists
-    (when has-app
-      (push "prog" options))
-      
-    ;; 2. Add Test options if tests exist
-    (when test-files
-      (push "all" options)
-      (dolist (f test-files)
-        (let ((base (file-name-base f)))
-          (when (string-prefix-p "test_" base)
-            (push (substring base 5) options)))))
-            
-    ;; Reverse to keep order logical
-    (setq options (nreverse options))
-    
-    ;; Safety check
-    (unless options
-      (error "🚨 FATAL: No main.cpp or test_*.cpp files found in project!"))
-      
-    ;; 3. Figure out the best default pre-selection
-    (let ((default-choice
-           (cond
-            ((string= current-base "main") "prog")
-            ((and current-base (string-prefix-p "test_" current-base))
-             (substring current-base 5))
-            ((and current-base (member current-base options))
-             current-base)
-            ((member "all" options) "all")
-            (t (car options)))))
-            
-      ;; Prompt the user!
-      (completing-read "Select Debug Target: " options nil t nil nil default-choice))))
 
-;; =========================================
-;; Dape Language-Specific Debug Configurations
-;; =========================================
+(defvar my-dape-dispatch-alist nil
+  "An alist mapping major modes to specific Dape startup functions.
+Format: \\='((mode1 mode2) . custom-start-function)")
 
 (defun my-dape-start-dispatch ()
-  "Silently start the debugger based on the current language."
+  "Silently route the debugger to the correct function based on language."
   (interactive)
-  (cond
-
-   ;; -----------------------------------------
-   ;; C / C++ (Xmake + GDB)
-   ;; -----------------------------------------
-   ((memq major-mode '(c-mode c-ts-mode c++-mode c++-ts-mode))
-    (let* ((cwd (dape-cwd))
-           ;; Trigger the unified menu
-           (choice (my-dape-prompt-target cwd))
-           
-           ;; Route the logic based on what the user picked
-           (is-app (string= choice "prog"))
-           (target-name (if is-app "prog" "test"))
-           (bin-path (expand-file-name (format "bin/%s" target-name) cwd))
-           
-           ;; Format Catch2 tag if they picked a specific test
-           (catch2-tag (cond
-                        (is-app nil)
-                        ((string= choice "all") nil)
-                        (t (format "[%s]" choice))))
-           
-           (dape-args (if catch2-tag (vector catch2-tag) []))
-           (compile-cmd (format "NO_COLOR=1 xmake f -m debug && xmake build %s" target-name)))
-      
-      ;; Execute Dape
-      (dape (list 'command "gdb"
-                  'command-args '("--interpreter=dap")
-                  :request "launch"
-                  :cwd cwd
-                  :args dape-args 
-                  :program bin-path
-                  'compile compile-cmd))))
-
-   ;; -----------------------------------------
-   ;; Fallback: If language isn't defined above, ask normally
-   ;; -----------------------------------------
-   (t
-    (call-interactively 'dape))))
-
-;; =========================================
-;; Xmake Project Deployer (Eshell Version)
-;; =========================================
-(defun eshell/xmake_deploy ()
-  "Instantly deploy the master xmake.lua template to the current directory
-and initialize the project."
-  (let* ((template-file (expand-file-name "xmake-template.lua" user-emacs-directory))
-         (target-file   (expand-file-name "xmake.lua" default-directory)))
+  (let ((dispatcher nil))
+    ;; Search the alist for the current major mode
+    (catch 'found
+      (dolist (entry my-dape-dispatch-alist)
+        (when (memq major-mode (car entry))
+          (setq dispatcher (cdr entry))
+          (throw 'found t))))
     
-    ;; 1. Safety Check: Does the template exist?
-    (unless (file-exists-p template-file)
-      (error "🚨 Template not found! Please save your xmake.lua to %s" template-file))
-      
-    ;; 2. Safety Check: Does the current folder already have an xmake.lua?
-    (if (file-exists-p target-file)
-        (message "⚠️ xmake.lua already exists here! Aborting to prevent overwrite.")
-      
-      ;; 3. Copy the file
-      (copy-file template-file target-file)
-      
-      ;; 4. Silently initialize Xmake in the background
-      (let ((default-directory default-directory))
-        (call-process "xmake" nil nil nil "f" "-m" "debug"))
-        
-      (message "✅ Successfully deployed xmake.lua and initialized project!"))))
+    ;; Execute the specific logic, or fallback to standard Dape prompt
+    (if dispatcher
+        (funcall dispatcher)
+      (call-interactively 'dape))))
+
+;; =========================================
+;; Load Dape Language Modules
+;; =========================================
+;; Add the dape folder to the load path
+(add-to-list 'load-path (expand-file-name "lisp/dape" user-emacs-directory))
+
+;; Load the specific language debuggers
+(require 'cpp)
+(require 'bash)
